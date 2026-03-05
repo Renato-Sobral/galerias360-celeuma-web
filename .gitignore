@@ -4,6 +4,7 @@ node_modules/
 # Next.js
 frontend/.next/
 frontend/out/
+frontend/public/*.mp4
 
 # Environment variables
 .env
