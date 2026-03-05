@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Uploads
+backend/uploads/logos/*
+backend/uploads/videos/*
+backend/src/uploads/logos/*
+backend/src/uploads/videos/*
+!backend/uploads/logos/.gitkeep
+!backend/uploads/videos/.gitkeep
+!backend/src/uploads/logos/.gitkeep
+!backend/src/uploads/videos/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug
+debug/
