@@ -6,7 +6,22 @@ const crypto = require('crypto');
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage }).single('image');
 
-const ENCRYPTION_KEY = crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY, 'utf8').digest(); // gera 32 bytes fixos
+const getEncryptionSecret = () => {
+    const secret = process.env.ENCRYPTION_KEY;
+
+    if (typeof secret === 'string' && secret.trim()) {
+        return secret;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('ENCRYPTION_KEY não definida. Configure esta variável no ambiente de produção.');
+    }
+
+    console.warn('⚠️ ENCRYPTION_KEY não definida. A usar chave de desenvolvimento temporária.');
+    return 'dev-encryption-key-change-me';
+};
+
+const ENCRYPTION_KEY = crypto.createHash('sha256').update(getEncryptionSecret(), 'utf8').digest(); // gera 32 bytes fixos
 const IV_LENGTH = 16;
 
 function encrypt(buffer) {
