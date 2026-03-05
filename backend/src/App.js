@@ -16,6 +16,7 @@ const estatisticaRoutes = require('./routes/estatisticaRoutes');
 const passwordRoutes = require('./routes/recuperarPasswordRoutes');
 const conviteRoutes = require('./routes/conviteRoutes');
 const mapOverlayRoutes = require('./routes/mapOverlayRoutes');
+const themeRoutes = require('./routes/themeRoutes');
 //const estatistica = require('./models/estatistica');
 
 const PORT = process.env.PORT || 3000;
@@ -79,6 +80,7 @@ app.use('/estatistica', estatisticaRoutes);
 app.use('/password', passwordRoutes);
 app.use('/convite', conviteRoutes);
 app.use('/overlay', mapOverlayRoutes);
+app.use('/theme', themeRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 io.on("connection", (socket) => {

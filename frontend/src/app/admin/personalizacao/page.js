@@ -734,8 +734,23 @@ export default function PersonalizacaoPage() {
                 },
                 body: fd,
             });
-            const json = await res.json();
-            if (!json.success) throw new Error(json.message);
+
+            const contentType = res.headers.get("content-type") || "";
+            let json = null;
+
+            if (contentType.includes("application/json")) {
+                json = await res.json();
+            } else {
+                const text = await res.text();
+                throw new Error(
+                    `Resposta inválida do servidor (${res.status}). Verifica se a API está configurada em NEXT_PUBLIC_API_URL e se a rota /theme está ativa.` +
+                    (text ? ` Detalhe: ${text.slice(0, 120)}` : "")
+                );
+            }
+
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || `Erro HTTP ${res.status}`);
+            }
             await refreshPresets();
             await refreshActive();
             setDialogOpen(false);

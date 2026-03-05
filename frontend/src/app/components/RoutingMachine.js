@@ -164,6 +164,13 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
             overflowY: "auto",
           });
 
+          // Remover scroll interno do .leaflet-routing-alt para evitar scroll duplo
+          const altEl = container.querySelector(".leaflet-routing-alt");
+          if (altEl) {
+            altEl.style.maxHeight = "none";
+            altEl.style.overflowY = "visible";
+          }
+
           if (isDark) {
             const icons = container.querySelectorAll(".leaflet-routing-icon");
             icons.forEach((icon) => {
