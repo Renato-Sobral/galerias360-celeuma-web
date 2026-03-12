@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../models/logger');
+const { getPublicUploadUrl, normalizeUploadsRelativePath } = require('../utils/mediaLibrary');
 
 /* ── multer: logos go to uploads/logos ── */
 const logosDir = path.join(__dirname, '..', '..', 'uploads', 'logos');
@@ -30,27 +31,68 @@ const upload = multer({
 ]);
 
 /* ── helpers ── */
-const baseUrl = () => process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
-const logoUrl = (filename) => filename ? `${baseUrl()}/uploads/logos/${filename}` : null;
+const baseUrl = (req) => {
+    if (process.env.BACKEND_URL && process.env.BACKEND_URL.trim()) {
+        return process.env.BACKEND_URL.trim().replace(/\/$/, '');
+    }
 
-const removeLogo = (url) => {
-    if (!url) return;
-    const filename = url.split('/').pop();
-    const filepath = path.join(logosDir, filename);
-    if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+    const forwardedProto = req?.headers?.['x-forwarded-proto']?.split(',')?.[0]?.trim();
+    const forwardedHost = req?.headers?.['x-forwarded-host']?.split(',')?.[0]?.trim();
+    const proto = forwardedProto || req?.protocol || 'http';
+    const host = forwardedHost || req?.get?.('host');
+
+    if (host) return `${proto}://${host}`;
+    return `http://localhost:${process.env.PORT || 3000}`;
+};
+
+const logoUrl = (filename, req) => (filename ? `${baseUrl(req)}${getPublicUploadUrl(`logos/${filename}`)}` : null);
+const normalizeLogoUrl = (url, req) => {
+    if (!url || typeof url !== 'string') return url;
+
+    const base = baseUrl(req);
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+            const relativePath = normalizeUploadsRelativePath(parsed.pathname);
+            const publicUrl = getPublicUploadUrl(relativePath);
+            return publicUrl ? `${base}${publicUrl}` : url;
+        }
+        return url;
+    } catch {
+        const relativePath = normalizeUploadsRelativePath(url);
+        const publicUrl = getPublicUploadUrl(relativePath);
+        return publicUrl ? `${base}${publicUrl}` : url;
+    }
+};
+
+const serializePreset = (preset, req) => {
+    if (!preset) return null;
+    const data = typeof preset.toJSON === 'function' ? preset.toJSON() : { ...preset };
+    return {
+        ...data,
+        logoLightUrl: normalizeLogoUrl(data.logoLightUrl, req),
+        logoDarkUrl: normalizeLogoUrl(data.logoDarkUrl, req),
+    };
 };
 
 const LANDING_TITLE_KEY = 'landing_hero_title';
 const LANDING_DESCRIPTION_KEY = 'landing_hero_description';
+const FAVICON_PATH_KEY = 'site_favicon_path';
 
 const DEFAULT_LANDING_TITLE = 'Explora o mundo com Galerias 360';
 const DEFAULT_LANDING_DESCRIPTION = 'Descobre pontos turísticos e culturais em realidade aumentada com uma experiência imersiva em 360º. Acede ao mapa interativo e mergulha em cada história.';
 
+const faviconUrl = (relativePath, req) => {
+    if (!relativePath) return null;
+    const publicUrl = getPublicUploadUrl(relativePath);
+    return publicUrl ? `${baseUrl(req)}${publicUrl}` : null;
+};
+
 /* ── LIST all presets ── */
-exports.listPresets = async (_req, res) => {
+exports.listPresets = async (req, res) => {
     try {
         const presets = await ThemePreset.findAll({ order: [['createdAt', 'DESC']] });
-        return res.json({ success: true, data: presets });
+        return res.json({ success: true, data: presets.map((preset) => serializePreset(preset, req)) });
     } catch (err) {
         console.error('Erro ao listar presets:', err);
         return res.status(500).json({ success: false, message: 'Erro ao listar presets' });
@@ -62,7 +104,7 @@ exports.getPreset = async (req, res) => {
     try {
         const preset = await ThemePreset.findByPk(req.params.id);
         if (!preset) return res.status(404).json({ success: false, message: 'Preset não encontrado' });
-        return res.json({ success: true, data: preset });
+        return res.json({ success: true, data: serializePreset(preset, req) });
     } catch (err) {
         console.error('Erro ao obter preset:', err);
         return res.status(500).json({ success: false, message: 'Erro ao obter preset' });
@@ -77,8 +119,14 @@ exports.createPreset = (req, res) => {
             const { name, lightVars, darkVars } = req.body;
             if (!name) return res.status(400).json({ success: false, message: 'Nome é obrigatório' });
 
-            const logoLightUrl = req.files?.logoLight?.[0] ? logoUrl(req.files.logoLight[0].filename) : null;
-            const logoDarkUrl = req.files?.logoDark?.[0] ? logoUrl(req.files.logoDark[0].filename) : null;
+            const logoLightPath = normalizeUploadsRelativePath(req.body.logoLightPath || '');
+            const logoDarkPath = normalizeUploadsRelativePath(req.body.logoDarkPath || '');
+            const logoLightUrl = req.files?.logoLight?.[0]
+                ? logoUrl(req.files.logoLight[0].filename, req)
+                : (logoLightPath ? `${baseUrl(req)}${getPublicUploadUrl(logoLightPath)}` : null);
+            const logoDarkUrl = req.files?.logoDark?.[0]
+                ? logoUrl(req.files.logoDark[0].filename, req)
+                : (logoDarkPath ? `${baseUrl(req)}${getPublicUploadUrl(logoDarkPath)}` : null);
 
             const preset = await ThemePreset.create({
                 name,
@@ -89,7 +137,7 @@ exports.createPreset = (req, res) => {
             });
 
             logger.info(`Preset "${name}" criado (id ${preset.id_theme_preset})`);
-            return res.status(201).json({ success: true, data: preset });
+            return res.status(201).json({ success: true, data: serializePreset(preset, req) });
         } catch (err) {
             console.error('Erro ao criar preset:', err);
             if (err.name === 'SequelizeUniqueConstraintError')
@@ -112,18 +160,23 @@ exports.updatePreset = (req, res) => {
             if (lightVars !== undefined) preset.lightVars = JSON.parse(lightVars);
             if (darkVars !== undefined) preset.darkVars = JSON.parse(darkVars);
 
+            const logoLightPath = normalizeUploadsRelativePath(req.body.logoLightPath || '');
+            const logoDarkPath = normalizeUploadsRelativePath(req.body.logoDarkPath || '');
+
             if (req.files?.logoLight?.[0]) {
-                removeLogo(preset.logoLightUrl);
-                preset.logoLightUrl = logoUrl(req.files.logoLight[0].filename);
+                preset.logoLightUrl = logoUrl(req.files.logoLight[0].filename, req);
+            } else if (req.body.logoLightPath !== undefined) {
+                preset.logoLightUrl = logoLightPath ? `${baseUrl(req)}${getPublicUploadUrl(logoLightPath)}` : null;
             }
             if (req.files?.logoDark?.[0]) {
-                removeLogo(preset.logoDarkUrl);
-                preset.logoDarkUrl = logoUrl(req.files.logoDark[0].filename);
+                preset.logoDarkUrl = logoUrl(req.files.logoDark[0].filename, req);
+            } else if (req.body.logoDarkPath !== undefined) {
+                preset.logoDarkUrl = logoDarkPath ? `${baseUrl(req)}${getPublicUploadUrl(logoDarkPath)}` : null;
             }
 
             await preset.save();
             logger.info(`Preset "${preset.name}" atualizado (id ${preset.id_theme_preset})`);
-            return res.json({ success: true, data: preset });
+            return res.json({ success: true, data: serializePreset(preset, req) });
         } catch (err) {
             console.error('Erro ao atualizar preset:', err);
             if (err.name === 'SequelizeUniqueConstraintError')
@@ -138,9 +191,6 @@ exports.deletePreset = async (req, res) => {
     try {
         const preset = await ThemePreset.findByPk(req.params.id);
         if (!preset) return res.status(404).json({ success: false, message: 'Preset não encontrado' });
-
-        removeLogo(preset.logoLightUrl);
-        removeLogo(preset.logoDarkUrl);
 
         // If this was the active preset, clear app_setting
         const activeSetting = await AppSetting.findByPk('active_theme_preset_id');
@@ -158,14 +208,14 @@ exports.deletePreset = async (req, res) => {
 };
 
 /* ── GET active theme (public) ── */
-exports.getActiveTheme = async (_req, res) => {
+exports.getActiveTheme = async (req, res) => {
     try {
         const setting = await AppSetting.findByPk('active_theme_preset_id');
         if (!setting || !setting.value) {
             return res.json({ success: true, data: null }); // use defaults
         }
         const preset = await ThemePreset.findByPk(setting.value);
-        return res.json({ success: true, data: preset || null });
+        return res.json({ success: true, data: serializePreset(preset, req) });
     } catch (err) {
         console.error('Erro ao obter tema ativo:', err);
         return res.status(500).json({ success: false, message: 'Erro ao obter tema ativo' });
@@ -239,5 +289,47 @@ exports.setLandingContent = async (req, res) => {
     } catch (err) {
         console.error('Erro ao atualizar conteúdo da homepage:', err);
         return res.status(500).json({ success: false, message: 'Erro ao atualizar conteúdo da homepage' });
+    }
+};
+
+/* ── GET favicon (public) ── */
+exports.getFavicon = async (req, res) => {
+    try {
+        const faviconSetting = await AppSetting.findByPk(FAVICON_PATH_KEY);
+        const faviconPath = faviconSetting?.value || null;
+
+        return res.json({
+            success: true,
+            data: {
+                path: faviconPath,
+                url: faviconUrl(faviconPath, req),
+            },
+        });
+    } catch (err) {
+        console.error('Erro ao obter favicon:', err);
+        return res.status(500).json({ success: false, message: 'Erro ao obter favicon' });
+    }
+};
+
+/* ── SET favicon (admin) ── */
+exports.setFavicon = async (req, res) => {
+    try {
+        const rawPath = req.body?.faviconPath;
+        const normalizedPath = normalizeUploadsRelativePath(rawPath || '');
+
+        await AppSetting.upsert({ key: FAVICON_PATH_KEY, value: normalizedPath || null });
+
+        logger.info(`Favicon atualizado para ${normalizedPath || 'null'}`);
+        return res.json({
+            success: true,
+            data: {
+                path: normalizedPath || null,
+                url: faviconUrl(normalizedPath || null, req),
+            },
+            message: 'Favicon atualizado',
+        });
+    } catch (err) {
+        console.error('Erro ao atualizar favicon:', err);
+        return res.status(500).json({ success: false, message: 'Erro ao atualizar favicon' });
     }
 };

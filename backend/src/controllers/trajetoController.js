@@ -6,6 +6,7 @@ const multer = require('multer');
 const logger = require('../models/logger');
 const path = require('path');
 const fs = require('fs');
+const { getPublicUploadUrl, normalizeUploadsRelativePath } = require('../utils/mediaLibrary');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -24,8 +25,9 @@ exports.uploadVideoMiddleware = upload.single('video');
 
 exports.uploadVideo = async (req, res) => {
   const { id } = req.params;
+  const requestedVideoPath = normalizeUploadsRelativePath(req.body?.videoPath || '');
 
-  if (!req.file) {
+  if (!req.file && !requestedVideoPath) {
     return res.status(400).json({ error: 'Ficheiro de vídeo não enviado.' });
   }
 
@@ -33,7 +35,10 @@ exports.uploadVideo = async (req, res) => {
     const trajeto = await Trajeto.findByPk(id);
     if (!trajeto) return res.status(404).json({ error: 'Trajeto não encontrado.' });
 
-    const videoPath = `/uploads/videos/${req.file.filename}`;
+    const videoPath = req.file
+      ? getPublicUploadUrl(`videos/${req.file.filename}`)
+      : getPublicUploadUrl(requestedVideoPath);
+
     trajeto.video = videoPath;
     await trajeto.save();
 

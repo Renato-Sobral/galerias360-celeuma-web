@@ -11,12 +11,15 @@ const {
     setActiveTheme,
     getLandingContent,
     setLandingContent,
+    getFavicon,
+    setFavicon,
 } = require('../controllers/themeController');
 
 // Public
 router.get('/active', getActiveTheme);
 router.get('/list', listPresets);
 router.get('/landing-content', getLandingContent);
+router.get('/favicon', getFavicon);
 router.get('/:id', getPreset);
 
 // Admin
@@ -25,5 +28,6 @@ router.put('/update/:id', requireAdmin, updatePreset);
 router.delete('/delete/:id', requireAdmin, deletePreset);
 router.post('/set-active', requireAdmin, setActiveTheme);
 router.post('/landing-content', requireAdmin, setLandingContent);
+router.post('/favicon', requireAdmin, setFavicon);
 
 module.exports = router;

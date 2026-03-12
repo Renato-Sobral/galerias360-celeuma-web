@@ -11,12 +11,14 @@ const RegisterForm = () => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSuccess("");
 
     if (!name || !email || !password || !confirmPassword) {
       setError("Por favor, preencha todos os campos.");
@@ -32,10 +34,9 @@ const RegisterForm = () => {
     setError("");
 
     try {
-      await axios.post(`${apiUrl}/auth/registo`, { name, email, password });
+      const response = await axios.post(`${apiUrl}/auth/registo`, { name, email, password });
 
-      alert("Registo realizado com sucesso!");
-
+      setSuccess(response.data?.message || "Conta criada com sucesso. Verifique o seu email para confirmar a conta.");
       setName("");
       setEmail("");
       setPassword("");
@@ -134,6 +135,7 @@ const RegisterForm = () => {
           </div>
 
           {error && <div className="text-red-600 text-sm leading-6">{error}</div>}
+          {success && <div className="text-green-600 text-sm leading-6">{success}</div>}
 
           <div>
             <button

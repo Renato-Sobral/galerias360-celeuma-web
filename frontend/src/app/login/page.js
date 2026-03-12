@@ -5,17 +5,6 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import axios from 'axios';
 import Logo from "../components/logo";
-import { getUserRoleFromToken } from "../components/jwtDecode";
-
-const ADMIN_ROLES = [
-  "Admin",
-  "Editor",
-  "Editor User",
-  "Editor Role",
-  "Editor Permission",
-  "Editor Locais",
-  "Editor Percurso",
-];
 
 const LoginForm = () => {
   const [email, setEmail] = useState("");
@@ -25,22 +14,22 @@ const LoginForm = () => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setError("");
+
     try {
       const response = await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, { email, password });
 
       if (response.data.authToken) {
         localStorage.setItem('authToken', response.data.authToken);
-        const role = getUserRoleFromToken();
-
-        if (role && ADMIN_ROLES.includes(role)) {
-          router.push('/admin');
-        } else {
-          router.push('/map');
-        }
-
+        router.replace('/map');
       }
     } catch (err) {
-      setError('Email ou senha inválidos.');
+      if (!err.response) {
+        setError('Não foi possível ligar ao servidor. Verifica se a API está ativa.');
+        return;
+      }
+
+      setError(err.response?.data?.message || 'Email ou senha inválidos.');
     }
   };
 

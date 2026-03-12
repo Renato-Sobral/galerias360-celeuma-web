@@ -17,6 +17,8 @@ const passwordRoutes = require('./routes/recuperarPasswordRoutes');
 const conviteRoutes = require('./routes/conviteRoutes');
 const mapOverlayRoutes = require('./routes/mapOverlayRoutes');
 const themeRoutes = require('./routes/themeRoutes');
+const categoriaPontoRoutes = require('./routes/categoriaPontoRoutes');
+const mediaRoutes = require('./routes/mediaRoutes');
 //const estatistica = require('./models/estatistica');
 
 const PORT = process.env.PORT || 3000;
@@ -81,6 +83,8 @@ app.use('/password', passwordRoutes);
 app.use('/convite', conviteRoutes);
 app.use('/overlay', mapOverlayRoutes);
 app.use('/theme', themeRoutes);
+app.use('/categoria', categoriaPontoRoutes);
+app.use('/media', mediaRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 io.on("connection", (socket) => {
@@ -91,7 +95,7 @@ io.on("connection", (socket) => {
   });
 });
 
-sequelize.sync({ force: false })
+sequelize.sync({ alter: true })
   .then(() => console.log("✅ Tabelas sincronizadas com sucesso!"))
   .catch(err => console.error("❌ Erro ao sincronizar tabelas:", err));
 

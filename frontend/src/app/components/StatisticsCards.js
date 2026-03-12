@@ -4,10 +4,9 @@ import {
     CardHeader,
     CardTitle,
     CardDescription,
-    CardFooter,
 } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { TrendingUpIcon, MapPin, Waypoints, Eye } from "lucide-react"
+import { TrendingUpIcon, MapPin, Waypoints, Eye, Monitor, Smartphone, Tablet } from "lucide-react"
 
 export default function StatisticsCards() {
     const [stats, setStats] = useState(null)
@@ -19,7 +18,7 @@ export default function StatisticsCards() {
 
         const fetchStats = async () => {
             try {
-                const cacheKey = "dashboard:stats:v1"
+                const cacheKey = "dashboard:stats:v2"
                 const cachedRaw = typeof window !== "undefined" ? sessionStorage.getItem(cacheKey) : null
 
                 if (cachedRaw) {
@@ -56,6 +55,12 @@ export default function StatisticsCards() {
 
     if (loading && !stats) return <p>A carregar estatísticas...</p>
     if (!stats) return <p className="text-muted-foreground">Sem dados estatísticos.</p>
+
+    const dispositivos = stats.dispositivos || { desktop: 0, mobile: 0, tablet: 0 }
+    const totalDispositivos = dispositivos.desktop + dispositivos.mobile + dispositivos.tablet
+    const pctDesktop = totalDispositivos > 0 ? ((dispositivos.desktop / totalDispositivos) * 100).toFixed(0) : 0
+    const pctMobile = totalDispositivos > 0 ? ((dispositivos.mobile / totalDispositivos) * 100).toFixed(0) : 0
+    const pctTablet = totalDispositivos > 0 ? ((dispositivos.tablet / totalDispositivos) * 100).toFixed(0) : 0
 
     return (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 @container/card">
@@ -113,19 +118,33 @@ export default function StatisticsCards() {
                 </CardHeader>
             </Card>
 
-            {/* Conteúdo disponível */}
+            {/* Dispositivos */}
             <Card className="relative flex flex-col">
                 <CardHeader className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                        <CardDescription>Conteúdo disponível</CardDescription>
+                        <CardDescription className="flex items-center gap-1">
+                            <Monitor className="size-4" />
+                            Dispositivos
+                        </CardDescription>
                         <Badge variant="outline" className="flex gap-1 rounded-lg text-xs shrink-0">
                             <TrendingUpIcon className="size-3" />
-                            +{stats.novosPontos + stats.novosTrajetos} este mês
+                            +{stats.novosPontos + stats.novosTrajetos} conteúdo
                         </Badge>
                     </div>
-                    <CardTitle className="text-2xl font-semibold tabular-nums">
-                        {stats.totalPontos} ponto(s) • {stats.totalTrajetos} trajeto(s)
-                    </CardTitle>
+                    <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-1" title="Desktop">
+                            <Monitor className="size-4 text-[hsl(var(--chart-1))]" />
+                            <span className="font-semibold">{pctDesktop}%</span>
+                        </div>
+                        <div className="flex items-center gap-1" title="Mobile">
+                            <Smartphone className="size-4 text-[hsl(var(--chart-2))]" />
+                            <span className="font-semibold">{pctMobile}%</span>
+                        </div>
+                        <div className="flex items-center gap-1" title="Tablet">
+                            <Tablet className="size-4 text-[hsl(var(--chart-3))]" />
+                            <span className="font-semibold">{pctTablet}%</span>
+                        </div>
+                    </div>
                 </CardHeader>
             </Card>
         </div>

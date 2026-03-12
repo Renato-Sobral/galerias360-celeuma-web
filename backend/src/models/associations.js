@@ -5,7 +5,9 @@ const Rota = require('./rota');
 const Trajeto = require('./trajeto');
 const Ponto = require('./ponto');
 const PontoTrajeto = require('./ponto_trajeto');
+const PontoCategoria = require('./ponto_categoria');
 const Hotspot = require('./hotspot');
+const CategoriaPonto = require('./categoria_ponto');
 const ThemePreset = require('./theme_preset');
 const AppSetting = require('./app_setting');
 
@@ -47,6 +49,20 @@ Rota.hasMany(Trajeto, { foreignKey: 'id_rota', onDelete: 'CASCADE' });
 Hotspot.belongsTo(Ponto, { foreignKey: 'id_ponto' });
 Ponto.hasMany(Hotspot, { foreignKey: 'id_ponto', });
 
+// Categoria <-> Ponto via PontoCategoria
+Ponto.belongsToMany(CategoriaPonto, {
+    through: PontoCategoria,
+    foreignKey: 'id_ponto',
+    otherKey: 'id_categoria',
+    as: 'categorias'
+});
+CategoriaPonto.belongsToMany(Ponto, {
+    through: PontoCategoria,
+    foreignKey: 'id_categoria',
+    otherKey: 'id_ponto',
+    as: 'pontos'
+});
+
 module.exports = {
     Role,
     Permission,
@@ -54,6 +70,8 @@ module.exports = {
     Rota,
     Trajeto,
     Ponto,
+    CategoriaPonto,
+    PontoCategoria,
     PontoTrajeto,
     ThemePreset,
     AppSetting

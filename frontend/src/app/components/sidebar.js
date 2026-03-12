@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { MenuIcon, XIcon, LayoutDashboard, Map, MapPin, Waypoints, Home, Edit, Palette } from "lucide-react"
+import { MenuIcon, XIcon, LayoutDashboard, Map, MapPin, Waypoints, Home, Edit, Palette, FolderKanban } from "lucide-react"
 import { User } from "../components/user"
 import TooltipWrapper from "../components/TooltipWrapper"
 import { getUserDataFromToken } from "../components/jwtDecode"
@@ -33,6 +33,7 @@ const Sidebar = () => {
   const PONTOS_ROLES = ["Admin", "Editor", "Editor Locais"]
   const TRAJETOS_ROLES = ["Admin", "Editor", "Editor Percurso"]
   const EDITOR_ROLES = ["Admin", "Editor"]
+  const MEDIA_ROLES = ["Admin", "Editor"]
   const ADMIN_ONLY = ["Admin"]
 
   const canAccess = (allowedRoles) =>
@@ -262,6 +263,38 @@ const Sidebar = () => {
                       </div>
                     </li>
                   )}
+
+                  {/* File Manager */}
+                  {canAccess(MEDIA_ROLES) && (
+                    <li>
+                      <div className="w-full">
+                        <div className="hidden sm:block">
+                          <TooltipWrapper content="File Manager" sideOffset={12}>
+                            <Button
+                              variant="ghost"
+                              onClick={() => handleNavigate("/admin/media")}
+                              className={`flex justify-center w-full rounded-sm p-3 text-muted-foreground transition-colors duration-300
+                            hover:bg-muted hover:text-foreground
+                            ${pathname?.startsWith("/admin/media") ? "sm:bg-muted sm:text-foreground" : ""}`}
+                            >
+                              <FolderKanban className="w-5 h-5" />
+                            </Button>
+                          </TooltipWrapper>
+                        </div>
+                        <div className="sm:hidden">
+                          <Button
+                            variant="ghost"
+                            onClick={() => handleNavigate("/admin/media")}
+                            className="flex w-full rounded-sm p-3 text-muted-foreground hover:bg-muted hover:text-foreground justify-start items-center gap-2"
+                          >
+                            <FolderKanban className="w-5 h-5" />
+                            <span className={`${isOpen ? "inline" : "hidden"}`}>File Manager</span>
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  )}
+
                 </>
               )}
 

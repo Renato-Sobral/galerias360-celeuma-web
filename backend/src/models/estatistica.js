@@ -15,6 +15,19 @@ const Estatistica = sequelize.define('estatisticas', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  dispositivo: {
+    type: DataTypes.ENUM('desktop', 'mobile', 'tablet'),
+    allowNull: true,
+    defaultValue: 'desktop',
+  },
+  browser: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+  },
+  sistema_operativo: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+  },
   data: {
     type: DataTypes.DATE,
     allowNull: false,

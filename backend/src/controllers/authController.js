@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const user = require('../models/user');
 const role = require('../models/role');
+const { sendAccountConfirmationEmail } = require('./emailSenderController');
 
 exports.login = async (req, res) => {
     const { email, password } = req.body;
@@ -19,6 +20,10 @@ exports.login = async (req, res) => {
 
         if (utilizador.active === false) {
             return res.status(403).send({ message: 'A sua conta está bloqueada. Contacte um administrador.' });
+        }
+
+        if (!utilizador.email_confirmed) {
+            return res.status(403).send({ message: 'Conta não confirmada. Verifique o email antes de iniciar sessão.' });
         }
 
         const isMatch = await bcrypt.compare(password, utilizador.password);
@@ -80,17 +85,79 @@ exports.registo = async (req, res) => {
             name,
             email,
             id_role,
-            password: hashedPassword
+            password: hashedPassword,
+            email_confirmed: false,
         });
 
         if (novouser) {
-            return res.status(201).send({ message: 'user registado com sucesso' });
+            try {
+                const confirmationToken = jwt.sign(
+                    {
+                        id_user: novouser.id_user,
+                        email: novouser.email,
+                        purpose: 'confirm-account',
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '24h' }
+                );
+
+                await sendAccountConfirmationEmail(novouser.email, confirmationToken, novouser.name);
+            } catch (error) {
+                await novouser.destroy();
+                throw error;
+            }
+
+            return res.status(201).send({ message: 'Conta criada com sucesso. Verifique o email para confirmar a conta.' });
         } else {
             return res.status(500).send({ message: 'Erro ao registar o user' });
         }
     } catch (error) {
         console.error('Erro no registo:', error);
-        res.status(500).send({ message: 'Erro no servidor' });
+        res.status(500).send({ message: error.message || 'Erro no servidor' });
+    }
+};
+
+exports.confirmarConta = async (req, res) => {
+    const { token } = req.query;
+
+    if (!token) {
+        return res.status(400).json({ message: 'Token de confirmação é obrigatório.' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        if (decoded.purpose !== 'confirm-account' || !decoded.id_user || !decoded.email) {
+            return res.status(400).json({ message: 'Token de confirmação inválido.' });
+        }
+
+        const utilizador = await user.findOne({
+            where: {
+                id_user: decoded.id_user,
+                email: decoded.email,
+            },
+        });
+
+        if (!utilizador) {
+            return res.status(404).json({ message: 'Utilizador não encontrado para confirmação.' });
+        }
+
+        if (utilizador.email_confirmed) {
+            return res.status(200).json({ message: 'A conta já se encontra confirmada.' });
+        }
+
+        utilizador.email_confirmed = true;
+        await utilizador.save();
+
+        return res.status(200).json({ message: 'Conta confirmada com sucesso. Já pode iniciar sessão.' });
+    } catch (error) {
+        console.error('Erro ao confirmar conta:', error);
+
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ message: 'O link de confirmação expirou. Faça um novo registo ou peça reenvio.' });
+        }
+
+        return res.status(400).json({ message: 'Token de confirmação inválido.' });
     }
 };
 

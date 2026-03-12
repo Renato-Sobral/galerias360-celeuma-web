@@ -1,9 +1,32 @@
 const MapOverlay = require('../models/map_overlay');
 const multer = require('multer');
 const logger = require('../models/logger');
+const { normalizeUploadsRelativePath, readUploadFileBuffer } = require('../utils/mediaLibrary');
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage, limits: { fileSize: 100 * 1024 * 1024 } }).single('file'); // "file" será o campo enviado no form
+
+function resolveOverlayPayload(req) {
+    if (req.file?.buffer) {
+        return {
+            buffer: req.file.buffer,
+            mediaPath: null,
+        };
+    }
+
+    const mediaPath = normalizeUploadsRelativePath(req.body.mediaPath || '');
+    if (!mediaPath) {
+        return {
+            buffer: null,
+            mediaPath: null,
+        };
+    }
+
+    return {
+        buffer: readUploadFileBuffer(mediaPath),
+        mediaPath,
+    };
+}
 
 // CREATE
 exports.createOverlay = (req, res) => {
@@ -13,13 +36,15 @@ exports.createOverlay = (req, res) => {
         const { tipo, username } = req.body;
 
         try {
-            if (!req.file || !req.file.buffer) {
+            const { buffer, mediaPath } = resolveOverlayPayload(req);
+            if (!buffer) {
                 return res.status(400).json({ error: 'Ficheiro é obrigatório' });
             }
 
             const overlay = await MapOverlay.create({
                 tipo,
-                conteudo: req.file.buffer
+                conteudo: buffer,
+                mediaPath,
             });
 
             const logMessage = `${username} criou um novo overlay (${tipo})`;
@@ -86,8 +111,13 @@ exports.updateOverlay = (req, res) => {
             const overlay = await MapOverlay.findByPk(id);
             if (!overlay) return res.status(404).json({ error: "Overlay não encontrado" });
 
-            if (req.file && req.file.buffer) {
-                overlay.conteudo = req.file.buffer;
+            const { buffer, mediaPath } = resolveOverlayPayload(req);
+
+            if (buffer) {
+                overlay.conteudo = buffer;
+                overlay.mediaPath = mediaPath;
+            } else if (req.body.mediaPath !== undefined) {
+                overlay.mediaPath = mediaPath || null;
             }
 
             overlay.tipo = tipo ?? overlay.tipo;

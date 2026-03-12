@@ -20,27 +20,35 @@ const Ponto = sequelize.define('pontos', {
         allowNull: true
     },
     longitude: {
-        type: DataTypes.FLOAT, 
+        type: DataTypes.FLOAT,
+        allowNull: true
+    },
+    id_categoria: {
+        type: DataTypes.INTEGER,
         allowNull: true
     },
     image: {
         type: DataTypes.BLOB('long'),
         allowNull: true
     },
+    imagePath: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
     iv: {
         type: DataTypes.STRING,
         allowNull: true
-      }
+    }
 },
-{
-    tableName: "pontos",
-    timestamps: true,
-    indexes: [
-        {
-            unique: true,
-            fields: ['latitude', 'longitude']
-        }
-    ]
-});
+    {
+        tableName: "pontos",
+        timestamps: true,
+        indexes: [
+            {
+                unique: true,
+                fields: ['latitude', 'longitude']
+            }
+        ]
+    });
 
 module.exports = Ponto;

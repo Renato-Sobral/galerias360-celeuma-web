@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import DataTable from "../../components/DataTable";
 import ProtectedRoute from "../../components/protectedRoute";
 import CustomDialog from "../../components/CustomDialog";
+import MediaSourceField from "../../components/MediaSourceField";
 import Swal from "sweetalert2";
+import { resolveMediaSelection } from "../../lib/media-library";
 
 async function getTrajetos() {
   const url = `${process.env.NEXT_PUBLIC_API_URL}/trajeto/list`;
@@ -29,7 +31,7 @@ function Trajetos({ userRole }) {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedTrajeto, setSelectedTrajeto] = useState(null);
   const [descricaoEdit, setDescricaoEdit] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedVideo, setSelectedVideo] = useState(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -101,7 +103,12 @@ function Trajetos({ userRole }) {
       handleDelete(trajeto);
     } else if (action === "Adicionar vídeo") {
       setSelectedTrajeto(trajeto);
-      setSelectedFile(null);
+      setSelectedVideo(trajeto?.video ? {
+        source: "library",
+        path: String(trajeto.video).replace(/^.*\/uploads\//, ""),
+        name: String(trajeto.video).split("/").pop(),
+        url: `${process.env.NEXT_PUBLIC_API_URL}${trajeto.video}`,
+      } : null);
       setUploadDialogOpen(true);
     } else if (action === "Editar") {
       setSelectedTrajeto(trajeto);
@@ -175,10 +182,10 @@ function Trajetos({ userRole }) {
 };
 
   const handleConfirmUploadVideo = async () => {
-    if (!selectedFile) {
+    if (!selectedVideo) {
       Swal.fire({
         title: "Campos obrigatórios",
-        text: "Selecione um ficheiro de vídeo para enviar.",
+        text: "Selecione um ficheiro de vídeo.",
         icon: "warning",
         confirmButtonColor: "#171717",
       });
@@ -186,8 +193,9 @@ function Trajetos({ userRole }) {
     }
 
     try {
+      const resolvedVideo = await resolveMediaSelection(selectedVideo, "videos");
       const formData = new FormData();
-      formData.append("video", selectedFile);
+      formData.append("videoPath", resolvedVideo?.path || "");
 
       const url = `${process.env.NEXT_PUBLIC_API_URL}/trajeto/upload-video/${selectedTrajeto.id_trajeto}`;
       const res = await fetch(url, {
@@ -204,7 +212,7 @@ function Trajetos({ userRole }) {
         );
         setUploadDialogOpen(false);
         setSelectedTrajeto(null);
-        setSelectedFile(null);
+        setSelectedVideo(null);
         Swal.fire({
           title: "Enviado!",
           text: "Vídeo carregado com sucesso.",
@@ -301,24 +309,21 @@ function Trajetos({ userRole }) {
           setUploadDialogOpen(open);
           if (!open) {
             setSelectedTrajeto(null);
-            setSelectedFile(null);
+            setSelectedVideo(null);
           }
         }}
         onConfirm={handleConfirmUploadVideo}
         confirmLabel="Enviar"
         cancelLabel="Cancelar"
       >
-        <input
-          type="file"
+        <MediaSourceField
+          label="Vídeo do trajeto"
           accept="video/*"
-          onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-          className="w-full"
+          selection={selectedVideo}
+          onChange={setSelectedVideo}
+          destinationPath="videos"
+          required
         />
-        {selectedFile && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Ficheiro selecionado: {selectedFile.name}
-          </p>
-        )}
       </CustomDialog>
     </div>
   );

@@ -6,8 +6,10 @@ const ThemePresetContext = createContext({
     presets: [],
     activePreset: null,
     logos: { light: null, dark: null, invertDark: false },
+    favicon: null,
     refreshPresets: () => { },
     refreshActive: () => { },
+    refreshFavicon: () => { },
 });
 
 export const useThemePresets = () => useContext(ThemePresetContext);

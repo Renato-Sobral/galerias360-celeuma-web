@@ -73,7 +73,7 @@ export default function PontoDetail() {
           </p>
         </div>
         <AFrameComponent
-          environment={ponto.image}
+          environment={ponto.environment}
           enableContextMenu={true}
           pontoId={pontoId}
         />

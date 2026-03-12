@@ -4,13 +4,18 @@ import { useState, useEffect } from 'react';
 import Sidebar from '../../../components/sidebar';
 import ProtectedRoute from '../../../components/protectedRoute';
 import { getUserNameFromToken } from '../../../components/jwtDecode';
+import MultiCategoryPicker from '../../../components/MultiCategoryPicker';
+import MediaSourceField from '../../../components/MediaSourceField';
+import { resolveMediaSelection } from '../../../lib/media-library';
 
 export default function CreatePoint() {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [latitude, setLatitude] = useState('');
     const [longitude, setLongitude] = useState('');
-    const [image, setImage] = useState(null);
+    const [idCategorias, setIdCategorias] = useState([]);
+    const [categorias, setCategorias] = useState([]);
+    const [imageSelection, setImageSelection] = useState(null);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [username, setUsername] = useState('');
@@ -20,24 +25,66 @@ export default function CreatePoint() {
             const username = await getUserNameFromToken();
             setUsername(username);
         };
+        const fetchCategorias = async () => {
+            try {
+                const url = `${process.env.NEXT_PUBLIC_API_URL}/categoria/list`;
+                const response = await fetch(url);
+                const data = await response.json();
+                setCategorias(data.categorias || []);
+            } catch (err) {
+                console.error('Erro ao carregar categorias:', err);
+            }
+        };
+
         fetchUsername();
-    })
+        fetchCategorias();
+    }, [])
+
+    const handleCreateCategoria = async (categoriaName) => {
+        const url = `${process.env.NEXT_PUBLIC_API_URL}/categoria/create`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${localStorage.getItem('authToken') || ''}`,
+            },
+            body: JSON.stringify({ name: categoriaName }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || payload.message || 'Não foi possível criar a categoria.');
+        }
+
+        if (payload.categoria) {
+            setCategorias((prev) => {
+                const exists = prev.some((categoria) => String(categoria.id_categoria) === String(payload.categoria.id_categoria));
+                if (exists) return prev;
+                return [...prev, payload.categoria].sort((left, right) => left.name.localeCompare(right.name));
+            });
+        }
+
+        return payload.categoria;
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
 
         // Simple validation to make sure all fields are filled
-        if (!name || !description || !latitude || !longitude || !image) {
-            setError('Please fill in all the fields and upload an image.');
+        if (!name || !description || !latitude || !longitude || idCategorias.length === 0 || !imageSelection) {
+            setError('Please fill in all the fields and select an image.');
             return;
         }
+
+        const resolvedImage = await resolveMediaSelection(imageSelection, 'pontos');
 
         const formData = new FormData();
         formData.append('name', name);
         formData.append('description', description);
         formData.append('latitude', latitude);
         formData.append('longitude', longitude);
-        formData.append('image', image);
+        formData.append('id_categorias', JSON.stringify(idCategorias));
+        formData.append('imagePath', resolvedImage?.path || '');
         formData.append('username', username);
 
         console.log(formData)
@@ -59,7 +106,8 @@ export default function CreatePoint() {
                 setDescription('');
                 setLatitude('');
                 setLongitude('');
-                setImage(null);
+                setIdCategorias([]);
+                setImageSelection(null);
             } else {
                 const errorData = await response.json();
                 setError(errorData.error || 'An error occurred');
@@ -68,13 +116,6 @@ export default function CreatePoint() {
         } catch (err) {
             setError('An error occurred while submitting the form.');
             setSuccess('');
-        }
-    };
-
-    const handleImageChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setImage(file); // Save the image file object
         }
     };
 
@@ -154,21 +195,34 @@ export default function CreatePoint() {
                         </div>
 
                         <div>
+                            <label htmlFor="id_categorias" className="block text-sm font-medium text-gray-900">
+                                Categorias
+                            </label>
+                            <div className="mt-2">
+                                <MultiCategoryPicker
+                                    categorias={categorias}
+                                    selectedIds={idCategorias}
+                                    onChange={setIdCategorias}
+                                    allowCreate
+                                    onCreateCategory={handleCreateCategoria}
+                                />
+                            </div>
+                        </div>
+
+                        <div>
                             <label htmlFor="image" className="block text-sm font-medium text-gray-900">
                                 Upload Image
                             </label>
                             <div className="mt-2">
-                                <input
-                                    id="image"
-                                    name="image"
-                                    type="file"
+                                <MediaSourceField
+                                    label="Imagem"
                                     accept="image/*"
+                                    selection={imageSelection}
+                                    onChange={setImageSelection}
+                                    destinationPath="pontos"
                                     required
-                                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-base text-gray-900 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm"
-                                    onChange={handleImageChange}
                                 />
                             </div>
-                            {image && <img src={URL.createObjectURL(image)} alt="Preview" className="mt-2 w-32 h-32 object-cover" />}
                         </div>
 
                         {error && <div className="text-red-600 text-sm">{error}</div>}

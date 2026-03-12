@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { MapContainer, TileLayer, useMap, useMapEvent } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { getUserNameFromToken, getUserRoleFromToken } from "../components/jwtDecode";
 import CustomMarker from "../components/CustomMarker";
+import MultiCategoryPicker from "../components/MultiCategoryPicker";
 import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
 import 'leaflet-routing-machine';
 import MapClickReset from "../components/MapClickReset";
@@ -12,9 +13,32 @@ import RoutingMachine from "../components/RoutingMachine";
 import MapUserRealTimeLocation from "../components/MapUserRealTimeLocation";
 import { Switch } from "@/components/ui/switch";
 import TooltipWrapper from "../components/TooltipWrapper";
+import MediaSourceField from "../components/MediaSourceField";
 import Swal from "sweetalert2";
-import { Image, Pencil } from "lucide-react";
+import { Image, Layers, Loader2, LocateFixed, Pencil } from "lucide-react";
+import { createLibrarySelection, resolveMediaSelection } from "../lib/media-library";
 import 'aframe';
+
+const MAP_VIEWS = {
+    osm_hot: {
+        label: "Ruas (OSM HOT)",
+        url: "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">Humanitarian OpenStreetMap Team</a>',
+        maxZoom: 20,
+    },
+    satelite: {
+        label: "Satélite (Esri)",
+        url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attribution: "Tiles &copy; Esri",
+        maxZoom: 19,
+    },
+    carto_voyager: {
+        label: "Carto Voyager",
+        url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 20,
+    },
+};
 
 export default function MapComponent() {
     const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, latlng: null });
@@ -22,17 +46,35 @@ export default function MapComponent() {
     const [formLateralAssetsOpen, setFormLateralAssetsOpen] = useState(false);
     const [coordinates, setCoordinates] = useState(null);
     const [pontos, setPontos] = useState([]);
+    const [categorias, setCategorias] = useState([]);
+    const [selectedCategoriaFilter, setSelectedCategoriaFilter] = useState("all");
     const [rotas, setRotas] = useState([]);
     const [trajetoPontos, setTrajetoPontos] = useState([]);
     const [pontoMenu, setPontoMenu] = useState({ visible: false, x: 0, y: 0, ponto: null });
     const [rotaSelecionada, setRotaSelecionada] = useState(null);
     const [showRoutes, setShowRoutes] = useState(false);
-    const [pontoVisualizacoes, setPontoVisualizacoes] = useState(0);
+    const [mapView, setMapView] = useState("carto_voyager");
+    const [mapViewMenuOpen, setMapViewMenuOpen] = useState(false);
+    const [routesLoading, setRoutesLoading] = useState(false);
     const userRole = getUserRoleFromToken();
     const [overlays, setOverlays] = useState([]);
     const [overlayDone, setOverlayDone] = useState(false);
     const overlayFetchStartedRef = useRef(false);
+    const pendingRouteKeysRef = useRef(new Set());
+    const mapViewMenuRef = useRef(null);
     const isAdmin = userRole === "Admin";
+    const selectedMapView = MAP_VIEWS[mapView] || MAP_VIEWS.carto_voyager;
+
+    useEffect(() => {
+        const handleOutsideClick = (event) => {
+            if (!mapViewMenuRef.current?.contains(event.target)) {
+                setMapViewMenuOpen(false);
+            }
+        };
+
+        document.addEventListener("mousedown", handleOutsideClick);
+        return () => document.removeEventListener("mousedown", handleOutsideClick);
+    }, []);
 
     /*IMAGE CONTROLS*/
     const [panelOpenImg, setPanelOpenImg] = useState(false);
@@ -63,19 +105,57 @@ export default function MapComponent() {
 
     useEffect(() => {
         if (!showRoutes) {
-            const map = document.querySelector(".leaflet-container")?._leaflet_map;
-            if (map) {
-                map.eachLayer((layer) => {
-                    if (layer._container?.classList?.contains("leaflet-routing-container")) {
-                        map.removeControl(layer);
-                    }
-                    if (layer._router || layer._routes) {
-                        map.removeLayer(layer);
-                    }
-                });
-            }
+            setRoutesLoading(false);
+            pendingRouteKeysRef.current.clear();
         }
     }, [showRoutes]);
+
+    const getRouteKey = useCallback((trajeto, index) => {
+        const value = trajeto?.id_trajeto ?? trajeto?.Rota?.id_rota ?? trajeto?.rota?.id_rota ?? index;
+        return String(value);
+    }, []);
+
+    useEffect(() => {
+        if (!showRoutes) return;
+
+        const routeKeys = rotas
+            .map((trajeto, index) => getRouteKey(trajeto, index))
+            .filter(Boolean);
+
+        if (routeKeys.length === 0) {
+            setRoutesLoading(false);
+            pendingRouteKeysRef.current.clear();
+            return;
+        }
+
+        setRoutesLoading(true);
+    }, [showRoutes, rotas, getRouteKey]);
+
+    const handleRouteReady = useCallback((routeKey) => {
+        if (!showRoutes) return;
+
+        const key = String(routeKey);
+        if (!pendingRouteKeysRef.current.has(key)) return;
+
+        pendingRouteKeysRef.current.delete(key);
+        if (pendingRouteKeysRef.current.size === 0) {
+            setRoutesLoading(false);
+        }
+    }, [showRoutes]);
+
+    const handleShowRoutesChange = useCallback((checked) => {
+        setShowRoutes(checked);
+
+        if (!checked) {
+            setRoutesLoading(false);
+            pendingRouteKeysRef.current.clear();
+            setRotaSelecionada(null);
+            return;
+        }
+
+        const hasRoutes = rotas.length > 0;
+        setRoutesLoading(hasRoutes);
+    }, [rotas.length]);
 
     const loadPontos = useCallback(async () => {
         try {
@@ -85,6 +165,17 @@ export default function MapComponent() {
             setPontos(data.pontos);
         } catch (error) {
             console.error("Erro ao carregar pontos:", error);
+        }
+    }, []);
+
+    const loadCategorias = useCallback(async () => {
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categoria/list`);
+            if (!response.ok) throw new Error("Erro ao buscar categorias");
+            const data = await response.json();
+            setCategorias(data.categorias || []);
+        } catch (error) {
+            console.error("Erro ao carregar categorias:", error);
         }
     }, []);
 
@@ -102,37 +193,23 @@ export default function MapComponent() {
         }
     }, []);
 
-    const fetchPontoVisualizacoes = useCallback(async (pontoId) => {
-        try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/estatistica/visualizacoes/${pontoId}`);
-            const data = await response.json();
-            if (response.ok) {
-                setPontoVisualizacoes((prev) => ({
-                    ...prev,
-                    [pontoId]: data.visualizacoes,
-                }));
-            } else {
-                console.error("Erro ao carregar visualizações:", data.error);
-            }
-        } catch (error) {
-            console.error("Erro ao buscar visualizações:", error);
-        }
-    }, []);
-
     useEffect(() => {
         loadPontos();
         loadRotas();
-    }, [loadPontos, loadRotas]);
+        loadCategorias();
+    }, [loadPontos, loadRotas, loadCategorias]);
 
-    useEffect(() => {
-        pontos.forEach((ponto) => {
-            if (ponto.id_ponto) {
-                fetchPontoVisualizacoes(ponto.id_ponto);
-            } else {
-                console.error("ID do ponto é inválido ou indefinido");
-            }
-        });
-    }, [pontos, fetchPontoVisualizacoes]);
+    const pontosFiltrados = useMemo(() => pontos.filter((ponto) => {
+        if (selectedCategoriaFilter === "all") return true;
+        const categoriasPonto =
+            ponto?.categorias ||
+            ponto?.CategoriaPonto ||
+            ponto?.categorias_ponto ||
+            (ponto?.categoria ? [ponto.categoria] : []);
+
+        const listaCategorias = Array.isArray(categoriasPonto) ? categoriasPonto : [categoriasPonto];
+        return listaCategorias.some((categoria) => String(categoria?.id_categoria) === String(selectedCategoriaFilter));
+    }), [pontos, selectedCategoriaFilter]);
 
     const handlePontoRightClick = useCallback((e, ponto) => {
         if (!isAdmin) return;
@@ -141,29 +218,31 @@ export default function MapComponent() {
         setContextMenu({ visible: false, x: 0, y: 0, latlng: null });
     }, []);
 
+    const addPontoToTrajeto = useCallback((ponto) => {
+        if (!ponto) return;
+
+        setTrajetoPontos((prev) => {
+            const alreadySelected = prev.some((selected) => selected.id_ponto === ponto.id_ponto);
+            if (alreadySelected) return prev;
+            return [...prev, ponto];
+        });
+    }, []);
+
     const handleTrajetoSelection = useCallback(() => {
         const ponto = pontoMenu.ponto;
         if (!ponto) return;
 
-        if (!trajetoPontos.length) {
-            setTrajetoPontos([ponto]);
-        } else if (trajetoPontos.length === 1 && ponto.id_ponto !== trajetoPontos[0].id_ponto) {
-            setTrajetoPontos(prev => [...prev, ponto]);
-        }
+        addPontoToTrajeto(ponto);
         setPontoMenu({ visible: false, x: 0, y: 0, ponto: null });
-    }, [pontoMenu.ponto, trajetoPontos]);
+    }, [addPontoToTrajeto, pontoMenu.ponto]);
 
     const handleTrajetoSelectionFromPonto = useCallback((ponto) => {
         if (!isAdmin || !ponto) return;
 
-        if (!trajetoPontos.length) {
-            setTrajetoPontos([ponto]);
-        } else if (trajetoPontos.length === 1 && ponto.id_ponto !== trajetoPontos[0].id_ponto) {
-            setTrajetoPontos((prev) => [...prev, ponto]);
-        }
+        addPontoToTrajeto(ponto);
 
         setPontoMenu({ visible: false, x: 0, y: 0, ponto: null });
-    }, [isAdmin, trajetoPontos]);
+    }, [addPontoToTrajeto, isAdmin]);
 
     const handleGuardarTrajeto = useCallback(async () => {
         if (trajetoPontos.length < 2) return;
@@ -223,13 +302,50 @@ export default function MapComponent() {
         }
     }, [trajetoPontos, loadRotas]);
 
-    const handleGetCoordinates = useCallback(() => {
+    const copyToClipboard = useCallback(async (text) => {
+        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+
+        if (typeof document === "undefined") return false;
+
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.top = "-9999px";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+
+        let success = false;
+        try {
+            success = document.execCommand("copy");
+        } finally {
+            document.body.removeChild(textArea);
+        }
+
+        return success;
+    }, []);
+
+    const handleGetCoordinates = useCallback(async () => {
         if (contextMenu.latlng) {
-            navigator.clipboard.writeText(`${contextMenu.latlng.lat}, ${contextMenu.latlng.lng}`);
+            const value = `${contextMenu.latlng.lat}, ${contextMenu.latlng.lng}`;
+            const copied = await copyToClipboard(value);
             setCoordinates(contextMenu.latlng);
+
+            if (!copied) {
+                Swal.fire({
+                    title: "Atenção",
+                    text: "Não foi possível copiar automaticamente as coordenadas neste browser.",
+                    icon: "warning",
+                    confirmButtonColor: "#171717",
+                });
+            }
         }
         setContextMenu({ visible: false });
-    }, [contextMenu]);
+    }, [contextMenu, copyToClipboard]);
 
     function MapClickHandler() {
         const isAdmin = getUserRoleFromToken() === "Admin";
@@ -283,7 +399,7 @@ export default function MapComponent() {
                 onClick={handleTrajetoSelection}
                 className="px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 cursor-pointer rounded"
             >
-                {trajetoPontos.length === 0 ? "Adicionar Trajeto" : "Definir Fim do Trajeto"}
+                Adicionar ao Trajeto
             </div>
         </div>
     );
@@ -812,10 +928,16 @@ export default function MapComponent() {
                     })}
                 </div>
             )}
-            <MapContainer center={[40.659773, -7.910792]} zoom={15} zoomControl={false} className="h-full w-full sm:w-[calc(100%-64px)]" doubleClickZoom={false}>
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" style={{ zIndex: 1 }} />
+            <MapContainer center={[40.659773, -7.910792]} zoom={15} zoomControl={false} className="h-full w-full" doubleClickZoom={false}>
+                <TileLayer
+                    key={mapView}
+                    url={selectedMapView.url}
+                    attribution={selectedMapView.attribution}
+                    maxZoom={selectedMapView.maxZoom}
+                    style={{ zIndex: 1 }}
+                />
 
-                {pontos.map((ponto) => (
+                {pontosFiltrados.map((ponto) => (
                     <CustomMarker
                         key={ponto.id_ponto}
                         id={ponto.id_ponto}
@@ -823,8 +945,17 @@ export default function MapComponent() {
                         longitude={ponto.longitude}
                         name={ponto.name}
                         description={ponto.description}
+                        categoryName={
+                            (Array.isArray(ponto?.categorias) && ponto.categorias.length
+                                ? ponto.categorias.map((categoria) => categoria.name).join(", ")
+                                : ponto?.CategoriaPonto?.name ||
+                                ponto?.categorias_ponto?.name ||
+                                ponto?.categoria?.name) ||
+                            "Sem categoria"
+                        }
                         image={ponto.image}
-                        views={pontoVisualizacoes[ponto.id_ponto] || 0}
+                        imageUrl={ponto.imageUrl}
+                        views={ponto.visualizacoes || 0}
                         eventHandlers={{
                             contextmenu: (e) => handlePontoRightClick(e, ponto)
                         }}
@@ -834,24 +965,85 @@ export default function MapComponent() {
 
                 {showRoutes && rotas.map((trajeto, index) => {
                     const coords = trajeto.pontos.map(p => [p.latitude, p.longitude]);
+                    const routeKey = getRouteKey(trajeto, index);
                     return (
                         <RoutingMachine
-                            key={`routing-${trajeto.id_trajeto}`}
+                            key={`routing-${routeKey}`}
                             rotaId={trajeto.id_trajeto}
                             estatisticaRotaId={trajeto?.Rota?.id_rota ?? trajeto?.rota?.id_rota ?? trajeto?.id_rota}
                             coordinates={coords}
                             active={index === rotaSelecionada}
                             onClick={() => setRotaSelecionada(index)}
+                            onRouteReady={() => handleRouteReady(routeKey)}
                         />
                     );
                 })}
+                {trajetoPontos.length >= 2 && (
+                    <RoutingMachine
+                        key={`draft-routing-${trajetoPontos.map((p) => p.id_ponto).join("-")}`}
+                        coordinates={trajetoPontos.map((p) => [p.latitude, p.longitude])}
+                        active={false}
+                        showDetails={false}
+                    />
+                )}
                 <MapControls />
                 <MapFunctions openFormLateral={() => setFormLateralOpen(true)} openFormLateralAssets={() => setFormLateralAssetsOpen(true)} isAdmin={isAdmin} />
-                <FormLateral isOpen={formLateralOpen} onClose={() => setFormLateralOpen(false)} coordinates={coordinates} />
+                <FormLateral
+                    isOpen={formLateralOpen}
+                    onClose={() => setFormLateralOpen(false)}
+                    coordinates={coordinates}
+                    categorias={categorias}
+                />
                 <FormLateralAssets isOpen={formLateralAssetsOpen} onClose={() => setFormLateralAssetsOpen(false)} existingOverlay={overlays.length > 0 ? overlays[0] : null} />
-                <div className="absolute top-5 left-5 z-[1000] flex flex-col sm:flex-row gap-2 sm:gap-3 items-start sm:items-center w-[90vw] max-w-md">
+                <div className="absolute top-5 left-5 z-[1000] flex flex-wrap gap-2 sm:gap-3 items-center max-w-[calc(100vw-40px)]">
                     <SearchBar />
-                    <div className="flex items-center bg-white bg-opacity-90 px-2 py-[7px] rounded-lg shadow-lg dark:bg-black/90 w-auto">
+                    <div ref={mapViewMenuRef} className="relative flex items-center shrink-0">
+                        <button
+                            type="button"
+                            aria-label="Selecionar vista do mapa"
+                            title={`Vista atual: ${selectedMapView.label}`}
+                            onClick={() => setMapViewMenuOpen((prev) => !prev)}
+                            className="flex items-center justify-center bg-white bg-opacity-90 p-2 rounded-lg shadow-lg dark:bg-black/90"
+                        >
+                            <Layers className="h-4 w-4 text-foreground" />
+                        </button>
+
+                        {mapViewMenuOpen && (
+                            <div className="absolute top-[calc(100%+6px)] left-0 min-w-44 max-h-64 overflow-auto rounded-lg border border-border bg-background shadow-lg">
+                                <ul className="py-1">
+                                    {Object.entries(MAP_VIEWS).map(([value, config]) => (
+                                        <li key={value}>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setMapView(value);
+                                                    setMapViewMenuOpen(false);
+                                                }}
+                                                className={`w-full px-3 py-2 text-left text-xs hover:bg-muted ${mapView === value ? "font-semibold text-foreground" : "text-muted-foreground"}`}
+                                            >
+                                                {config.label}
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap sm:flex-nowrap items-center bg-white bg-opacity-90 px-2 py-[7px] gap-2 rounded-lg shadow-lg dark:bg-black/90 w-full sm:w-auto">
+                        <select
+                            value={selectedCategoriaFilter}
+                            onChange={(e) => setSelectedCategoriaFilter(e.target.value)}
+                            className="w-full sm:w-56 text-xs bg-transparent border border-border rounded px-2 py-1 text-gray-700 dark:text-white"
+                            aria-label="Filtrar pontos por categoria"
+                        >
+                            <option value="all">Todas as categorias</option>
+                            {categorias.map((categoria) => (
+                                <option key={categoria.id_categoria} value={String(categoria.id_categoria)}>
+                                    {categoria.name}
+                                </option>
+                            ))}
+                        </select>
+
                         <label
                             htmlFor="routes-switch"
                             className="text-xs text-gray-700 mr-2 dark:text-white whitespace-nowrap"
@@ -861,10 +1053,14 @@ export default function MapComponent() {
                         <Switch
                             id="routes-switch"
                             checked={showRoutes}
-                            onCheckedChange={setShowRoutes}
-                            disabled={showRoutes}
+                            onCheckedChange={handleShowRoutesChange}
                             className="dark:bg-white"
                         />
+                        {routesLoading && (
+                            <span className="ml-2 inline-flex items-center text-muted-foreground" aria-label="A carregar trajetos">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            </span>
+                        )}
                     </div>
                 </div>
 
@@ -900,51 +1096,182 @@ export default function MapComponent() {
 
 function SearchBar() {
     const [query, setQuery] = useState("");
+    const [results, setResults] = useState([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [showDropdown, setShowDropdown] = useState(false);
+    const [hasSearched, setHasSearched] = useState(false);
     const map = useMap();
+    const wrapperRef = useRef(null);
+    const debounceRef = useRef(null);
 
-    const handleSearch = async (e) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            if (!query) return;
+    const fetchLocations = useCallback(async (term) => {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=8&q=${encodeURIComponent(term)}`);
+        const data = await response.json();
 
+        return (Array.isArray(data) ? data : [])
+            .map((item) => ({
+                id: item.place_id,
+                label: item.display_name,
+                lat: Number.parseFloat(item.lat),
+                lon: Number.parseFloat(item.lon),
+            }))
+            .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+    }, []);
+
+    const selectLocation = useCallback((location) => {
+        map.setView([location.lat, location.lon], 18);
+        setQuery(location.label);
+        setShowDropdown(false);
+    }, [map]);
+
+    useEffect(() => {
+        const trimmed = query.trim();
+
+        if (trimmed.length < 3) {
+            setResults([]);
+            setHasSearched(false);
+            setShowDropdown(false);
+            if (debounceRef.current) {
+                clearTimeout(debounceRef.current);
+            }
+            return;
+        }
+
+        if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+        }
+
+        debounceRef.current = setTimeout(async () => {
             try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}`);
-                const data = await response.json();
-
-                if (data.length > 0) {
-                    const { lat, lon } = data[0];
-                    map.setView([parseFloat(lat), parseFloat(lon)], 18);
-                } else {
-                    alert("Localização não encontrada!");
-                }
+                setIsSearching(true);
+                const items = await fetchLocations(trimmed);
+                setResults(items);
+                setShowDropdown(true);
+                setHasSearched(true);
             } catch (error) {
                 console.error("Erro ao buscar localização:", error);
+                setResults([]);
+                setShowDropdown(true);
+                setHasSearched(true);
+            } finally {
+                setIsSearching(false);
             }
+        }, 300);
+
+        return () => {
+            if (debounceRef.current) {
+                clearTimeout(debounceRef.current);
+            }
+        };
+    }, [query, fetchLocations]);
+
+    useEffect(() => {
+        const handleOutsideClick = (event) => {
+            if (!wrapperRef.current?.contains(event.target)) {
+                setShowDropdown(false);
+            }
+        };
+
+        document.addEventListener("mousedown", handleOutsideClick);
+        return () => document.removeEventListener("mousedown", handleOutsideClick);
+    }, []);
+
+    const handleKeyDown = async (e) => {
+        if (e.key === "Escape") {
+            setShowDropdown(false);
+            return;
+        }
+
+        if (e.key !== "Enter") return;
+
+        e.preventDefault();
+        const trimmed = query.trim();
+        if (!trimmed) return;
+
+        if (results.length > 0) {
+            selectLocation(results[0]);
+            return;
+        }
+
+        try {
+            setIsSearching(true);
+            const items = await fetchLocations(trimmed);
+            setResults(items);
+            setShowDropdown(true);
+            setHasSearched(true);
+
+            if (items.length > 0) {
+                selectLocation(items[0]);
+            }
+        } catch (error) {
+            console.error("Erro ao buscar localização:", error);
+        } finally {
+            setIsSearching(false);
         }
     };
 
     return (
-        <div className="top-5 mt-[-2px] ml-[40px] left-5 w-80 flex items-center bg-white bg-opacity-90 rounded-lg shadow-lg sm:mt-0 sm:ml-0 dark:bg-black/90" style={{ zIndex: 1000 }}>
-            <input
-                type="text"
-                placeholder="Procurar Localização..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleSearch}
-                className="pl-3 py-2 w-full bg-transparent border-none outline-none"
-            />
+        <div
+            ref={wrapperRef}
+            className="w-full sm:w-[24rem] xl:w-[28rem] flex items-center bg-white bg-opacity-90 rounded-lg shadow-lg dark:bg-black/90 shrink-0"
+            style={{ zIndex: 1000 }}
+        >
+            <div className="relative w-full">
+                <input
+                    type="text"
+                    placeholder="Procurar Localização..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onFocus={() => {
+                        if (query.trim().length >= 3) setShowDropdown(true);
+                    }}
+                    onKeyDown={handleKeyDown}
+                    className="pl-3 py-2 w-full bg-transparent border-none outline-none"
+                />
+
+                {showDropdown && (
+                    <div className="absolute top-[calc(100%+6px)] left-0 right-0 max-h-64 overflow-auto rounded-lg border border-border bg-background shadow-lg">
+                        {isSearching ? (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">A pesquisar...</div>
+                        ) : results.length > 0 ? (
+                            <ul className="py-1">
+                                {results.map((location) => (
+                                    <li key={location.id}>
+                                        <button
+                                            type="button"
+                                            onClick={() => selectLocation(location)}
+                                            className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                                            title={location.label}
+                                        >
+                                            {location.label}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : hasSearched ? (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">Sem resultados.</div>
+                        ) : null}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
 
-function FormLateral({ isOpen, onClose, coordinates }) {
+function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
     const username = getUserNameFromToken();
     const [lat, setLat] = useState("");
     const [lng, setLng] = useState("");
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
-    const [image, setImage] = useState(null);
+    const [idCategorias, setIdCategorias] = useState([]);
+    const [imageSelection, setImageSelection] = useState(null);
     const [error, setError] = useState("");
+    const [categoriasLocais, setCategoriasLocais] = useState(categorias);
+
+    useEffect(() => {
+        setCategoriasLocais(categorias);
+    }, [categorias]);
 
     useEffect(() => {
         if (coordinates) {
@@ -953,17 +1280,10 @@ function FormLateral({ isOpen, onClose, coordinates }) {
         }
     }, [coordinates]);
 
-    const handleImageChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setImage(file);
-        }
-    };
-
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!name || !description || !lat || !lng || !image) {
+        if (!name || !description || !lat || !lng || idCategorias.length === 0 || !imageSelection) {
             setError("Preenche todos os campos e carrega uma imagem.");
             return;
         }
@@ -981,12 +1301,14 @@ function FormLateral({ isOpen, onClose, coordinates }) {
 
         if (!result.isConfirmed) return;
 
+        const resolvedImage = await resolveMediaSelection(imageSelection, "pontos");
         const formData = new FormData();
         formData.append("name", name);
         formData.append("description", description);
         formData.append("latitude", lat);
         formData.append("longitude", lng);
-        formData.append("image", image);
+        formData.append("id_categorias", JSON.stringify(idCategorias));
+        formData.append("imagePath", resolvedImage?.path || "");
         formData.append("username", username);
 
         try {
@@ -1002,7 +1324,8 @@ function FormLateral({ isOpen, onClose, coordinates }) {
                 setError("");
                 setName("");
                 setDescription("");
-                setImage(null);
+                setIdCategorias([]);
+                setImageSelection(null);
                 onClose();
                 Swal.fire({
                     title: "Criado!",
@@ -1014,6 +1337,32 @@ function FormLateral({ isOpen, onClose, coordinates }) {
         } catch (err) {
             setError("Erro ao enviar o formulário.");
         }
+    };
+
+    const handleCreateCategoria = async (categoriaName) => {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categoria/create`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
+            },
+            body: JSON.stringify({ name: categoriaName }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || payload.message || "Não foi possível criar a categoria.");
+        }
+
+        if (payload.categoria) {
+            setCategoriasLocais((prev) => {
+                const exists = prev.some((categoria) => String(categoria.id_categoria) === String(payload.categoria.id_categoria));
+                if (exists) return prev;
+                return [...prev, payload.categoria].sort((left, right) => left.name.localeCompare(right.name));
+            });
+        }
+
+        return payload.categoria;
     };
 
     return (
@@ -1082,20 +1431,24 @@ function FormLateral({ isOpen, onClose, coordinates }) {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Carregar Imagem</label>
-                        <input
-                            type="file"
-                            className="w-full py-2 rounded-lg"
-                            onChange={handleImageChange}
-                            accept="image/*"
+                        <label className="block text-sm font-medium text-gray-700">Categorias</label>
+                        <MultiCategoryPicker
+                            categorias={categoriasLocais}
+                            selectedIds={idCategorias}
+                            onChange={setIdCategorias}
+                            allowCreate
+                            onCreateCategory={handleCreateCategoria}
                         />
-                        {image && (
-                            <img
-                                src={URL.createObjectURL(image)}
-                                alt="Preview"
-                                className="mt-2 w-32 h-32 object-cover"
-                            />
-                        )}
+                    </div>
+                    <div>
+                        <MediaSourceField
+                            label="Carregar Imagem"
+                            accept="image/*"
+                            selection={imageSelection}
+                            onChange={setImageSelection}
+                            destinationPath="pontos"
+                            required
+                        />
                     </div>
                     {error && <div className="text-red-600 text-sm">{error}</div>}
                     <button
@@ -1113,23 +1466,18 @@ function FormLateral({ isOpen, onClose, coordinates }) {
 function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
     const username = getUserNameFromToken();
     const [tipo, setTipo] = useState(existingOverlay?.tipo || "");
-    const [file, setFile] = useState(null);
+    const [mediaSelection, setMediaSelection] = useState(null);
     const [error, setError] = useState("");
 
     useEffect(() => {
         if (existingOverlay) {
             setTipo(existingOverlay.tipo);
-            setFile(null); // não preenchemos o arquivo, só atualizamos se o usuário carregar outro
+            setMediaSelection(createLibrarySelection(existingOverlay.mediaPath));
         } else {
             setTipo("");
-            setFile(null);
+            setMediaSelection(null);
         }
     }, [existingOverlay]);
-
-    const handleFileChange = (e) => {
-        const uploadedFile = e.target.files[0];
-        if (uploadedFile) setFile(uploadedFile);
-    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -1138,7 +1486,7 @@ function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
             return;
         }
 
-        if (!file && !existingOverlay) {
+        if (!mediaSelection && !existingOverlay) {
             setError("Carrega um ficheiro.");
             return;
         }
@@ -1157,9 +1505,10 @@ function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
         });
         if (!result.isConfirmed) return;
 
+        const resolvedMedia = await resolveMediaSelection(mediaSelection, "overlays");
         const formData = new FormData();
         formData.append("tipo", tipo);
-        if (file) formData.append("file", file);
+        formData.append("mediaPath", resolvedMedia?.path || "");
         formData.append("username", username);
 
         try {
@@ -1180,7 +1529,7 @@ function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
             } else {
                 setError("");
                 setTipo("");
-                setFile(null);
+                setMediaSelection(null);
                 onClose();
                 Swal.fire({
                     title: existingOverlay ? "Atualizado!" : "Criado!",
@@ -1235,15 +1584,15 @@ function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Carregar Ficheiro</label>
-                        <input
-                            type="file"
-                            className="w-full py-2 rounded-lg"
-                            onChange={handleFileChange}
+                        <MediaSourceField
+                            label="Carregar Ficheiro"
                             accept="image/*,video/*,.glb,.ply,.splat"
+                            selection={mediaSelection}
+                            onChange={setMediaSelection}
+                            destinationPath="overlays"
+                            required={!existingOverlay}
                         />
-                        {file && <span className="mt-2 block text-sm text-gray-600">{file.name}</span>}
-                        {existingOverlay && !file && (
+                        {existingOverlay && !mediaSelection && (
                             <span className="mt-2 block text-sm text-gray-600">Arquivo atual será mantido.</span>
                         )}
                     </div>
@@ -1265,6 +1614,9 @@ function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
 function MapControls() {
     const map = useMap();
     const [zoomLevel, setZoomLevel] = useState(map.getZoom());
+    const requestBrowserLocation = useCallback((options) => new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
+    }), []);
 
     useEffect(() => {
         const handleZoom = () => setZoomLevel(map.getZoom());
@@ -1290,18 +1642,114 @@ function MapControls() {
         }
     };
 
+    const goToMyLocation = async (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        if (typeof window === "undefined" || !navigator.geolocation) {
+            Swal.fire({
+                title: "Geolocalização indisponível",
+                text: "Este browser não suporta geolocalização.",
+                icon: "warning",
+                confirmButtonColor: "#171717",
+            });
+            return;
+        }
+
+        const isLocalHost =
+            window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1";
+
+        if (!window.isSecureContext && !isLocalHost) {
+            Swal.fire({
+                title: "Localização bloqueada",
+                text: "A geolocalização requer HTTPS ou localhost. Usa http://localhost:3001 ou ativa HTTPS.",
+                icon: "warning",
+                confirmButtonColor: "#171717",
+            });
+            return;
+        }
+
+        const centerMap = (position) => {
+            const { latitude, longitude } = position.coords;
+            map.setView([latitude, longitude], Math.max(map.getZoom(), 16));
+        };
+
+        const handleLocationError = (errorEvent) => {
+            let message = "Não foi possível obter a tua localização.";
+
+            if (errorEvent?.code === 1) {
+                message = "Permissão de localização negada. Ativa a localização no browser/dispositivo.";
+            } else if (errorEvent?.code === 2) {
+                message = "Localização indisponível neste momento. Tenta novamente em instantes.";
+            } else if (errorEvent?.code === 3) {
+                message = "Tempo limite excedido ao obter a localização. Garante GPS ativo e boa rede/sinal.";
+            }
+
+            Swal.fire({
+                title: "Localização",
+                text: message,
+                icon: "warning",
+                confirmButtonColor: "#171717",
+            });
+        };
+
+        const attempts = [
+            {
+                enableHighAccuracy: false,
+                timeout: 30000,
+                maximumAge: 300000,
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 45000,
+                maximumAge: 0,
+            },
+            {
+                enableHighAccuracy: false,
+                timeout: 15000,
+                maximumAge: Infinity,
+            },
+        ];
+
+        let lastError = null;
+
+        for (const options of attempts) {
+            try {
+                const position = await requestBrowserLocation(options);
+                centerMap(position);
+                return;
+            } catch (errorEvent) {
+                lastError = errorEvent;
+
+                if (errorEvent?.code !== 3) {
+                    break;
+                }
+            }
+        }
+
+        handleLocationError(lastError);
+    };
+
     return (
-        <div className="absolute right-5 top-1/2 -translate-y-1/2 transform flex-col gap-2 bg-white bg-opacity-90 p-2 rounded-lg shadow-lg dark:bg-black/90 hidden sm:flex"
-            style={{ zIndex: 1000, cursor: "pointer" }}>
+        <div
+            className="fixed right-4 top-1/2 z-[1100] flex -translate-y-1/2 transform flex-col gap-2 rounded-lg bg-white/90 p-2 shadow-lg dark:bg-black/90 sm:right-5"
+            style={{ cursor: "pointer", display: "flex", pointerEvents: "auto" }}
+        >
+            <TooltipWrapper content="Ir para a minha localização" sideOffset={12}>
+                <button type="button" onClick={goToMyLocation} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
+                    <LocateFixed className="w-4 h-4" />
+                </button>
+            </TooltipWrapper>
             <TooltipWrapper content="Zoom In" sideOffset={12}>
-                <button onClick={zoomIn} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
+                <button type="button" onClick={zoomIn} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"></path>
                     </svg>
                 </button>
             </TooltipWrapper>
             <TooltipWrapper content="Zoom Out" sideOffset={12}>
-                <button onClick={zoomOut} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
+                <button type="button" onClick={zoomOut} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4"></path>
                     </svg>
@@ -1314,14 +1762,17 @@ function MapControls() {
 function MapFunctions({ openFormLateral, openFormLateralAssets, isAdmin }) {
     if (!isAdmin) return null;
     return (
-        <div className="absolute right-5 bottom-2 -translate-y-1/2 transform flex flex-col gap-2 bg-white bg-opacity-90 p-2 rounded-lg shadow-lg dark:bg-black/90" style={{ zIndex: 1000, cursor: "pointer" }}>
+        <div
+            className="fixed bottom-5 right-4 z-[1100] flex flex-col gap-2 rounded-lg bg-white/90 p-2 shadow-lg dark:bg-black/90 sm:right-5"
+            style={{ cursor: "pointer", display: "flex", pointerEvents: "auto" }}
+        >
             <TooltipWrapper content="Adicionar Assets" sideOffset={12}>
-                <button onClick={openFormLateralAssets} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
+                <button type="button" onClick={openFormLateralAssets} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
                     <Image className="w-4 h-4" />
                 </button>
             </TooltipWrapper>
             <TooltipWrapper content="Adicionar Ponto" sideOffset={12}>
-                <button onClick={openFormLateral} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
+                <button type="button" onClick={openFormLateral} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-map-pin-plus"><path d="M19.914 11.105A7.298 7.298 0 0 0 20 10a8 8 0 0 0-16 0c0 4.993 5.539 10.193 7.399 11.799a1 1 0 0 0 1.202 0 32 32 0 0 0 .824-.738" /><circle cx="12" cy="10" r="3" /><path d="M16 18h6" /><path d="M19 15v6" /></svg>
                 </button>
             </TooltipWrapper>

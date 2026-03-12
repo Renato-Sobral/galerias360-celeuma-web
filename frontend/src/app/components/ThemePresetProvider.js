@@ -85,6 +85,30 @@ export default function ThemePresetProvider({ children }) {
     const [presets, setPresets] = useState([]);
     const [activePreset, setActivePreset] = useState(null);
     const [logos, setLogos] = useState({ light: null, dark: null, invertDark: false });
+    const [favicon, setFavicon] = useState(null);
+
+    const applyFavicon = useCallback((url) => {
+        if (typeof document === "undefined") return;
+
+        const href = url || null;
+
+        const rels = ["icon", "shortcut icon", "apple-touch-icon"];
+        rels.forEach((rel) => {
+            let link = document.head.querySelector(`link[rel='${rel}']`);
+            if (!href) {
+                if (link) link.remove();
+                return;
+            }
+
+            if (!link) {
+                link = document.createElement("link");
+                link.setAttribute("rel", rel);
+                document.head.appendChild(link);
+            }
+
+            link.setAttribute("href", href);
+        });
+    }, []);
 
     /* Fetch all presets */
     const refreshPresets = useCallback(async () => {
@@ -98,6 +122,15 @@ export default function ThemePresetProvider({ children }) {
         const json = await safeFetchJson("/theme/active");
         if (json?.success && json.data) setActivePreset(json.data);
         else setActivePreset(null);
+    }, []);
+
+    const refreshFavicon = useCallback(async () => {
+        const json = await safeFetchJson("/theme/favicon");
+        if (json?.success) {
+            setFavicon(json.data?.url || null);
+            return;
+        }
+        setFavicon(null);
     }, []);
 
     /* Apply preset CSS vars whenever active preset changes */
@@ -116,16 +149,21 @@ export default function ThemePresetProvider({ children }) {
         });
     }, [activePreset]);
 
+    useEffect(() => {
+        applyFavicon(favicon);
+    }, [applyFavicon, favicon]);
+
     /* Bootstrap */
     useEffect(() => {
         // Only fetch the active preset by default.
         // The presets list is only needed for the admin personalization UI.
         refreshActive();
-    }, [refreshActive]);
+        refreshFavicon();
+    }, [refreshActive, refreshFavicon]);
 
     return (
         <ThemePresetContext.Provider
-            value={{ presets, activePreset, logos, refreshPresets, refreshActive }}
+            value={{ presets, activePreset, logos, favicon, refreshPresets, refreshActive, refreshFavicon }}
         >
             {children}
         </ThemePresetContext.Provider>

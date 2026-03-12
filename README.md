@@ -35,6 +35,8 @@ JWT_SECRET=chave_jwt_secreta
 ENCRYPTION_KEY=chave_encriptacao_aleatoria
 MJ_APIKEY_PUBLIC=chave_publica_mailjet
 MJ_APIKEY_PRIVATE=chave_privada_mailjet
+MAIL_FROM_EMAIL=remetente_verificado_no_mailjet
+MAIL_FROM_NAME=Galerias 360
 FRONTEND_URL=url_do_frontend
 ```
 
@@ -58,6 +60,8 @@ NEXT_PUBLIC_API_URL=url_do_backend
 ```bash
 npm run dev
 ```
+
+Em desenvolvimento numa rede local, usa o IP da máquina que está a correr o backend, por exemplo `NEXT_PUBLIC_API_URL=http://192.168.0.106:3000`, e expõe o frontend em `0.0.0.0:3001` para outros dispositivos da LAN conseguirem aceder.
 
 ---
 

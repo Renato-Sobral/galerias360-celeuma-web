@@ -38,6 +38,11 @@ const User = sequelize.define("user", {
     allowNull: false,
     defaultValue: true
   },
+  email_confirmed: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
 }, {
   tableName: "users",
   timestamps: false

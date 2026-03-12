@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import ProtectedRoute from "../../components/protectedRoute";
 import { useThemePresets, CSS_VAR_KEYS } from "../../components/themePresetContext";
+import MediaSourceField from "../../components/MediaSourceField";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,11 @@ import {
     Star,
     Eye,
 } from "lucide-react";
+import {
+    createLibrarySelection,
+    relativePathFromUploadsUrl,
+    resolveMediaSelection,
+} from "../../lib/media-library";
 
 const API = process.env.NEXT_PUBLIC_API_URL;
 
@@ -584,7 +590,7 @@ function SimpleSchemeCard({ scheme, isActive, onApply }) {
    MAIN PAGE
    ═══════════════════════════════════════════════════════════════ */
 export default function PersonalizacaoPage() {
-    const { presets, activePreset, refreshPresets, refreshActive } = useThemePresets();
+    const { presets, activePreset, refreshPresets, refreshActive, refreshFavicon } = useThemePresets();
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingPreset, setEditingPreset] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);
@@ -593,13 +599,16 @@ export default function PersonalizacaoPage() {
     const [landingTitle, setLandingTitle] = useState("Explora o mundo com Galerias 360");
     const [landingDescription, setLandingDescription] = useState("Descobre pontos turísticos e culturais em realidade aumentada com uma experiência imersiva em 360º. Acede ao mapa interativo e mergulha em cada história.");
     const [savingLandingText, setSavingLandingText] = useState(false);
+    const [faviconSelection, setFaviconSelection] = useState(null);
+    const [faviconPreview, setFaviconPreview] = useState(null);
+    const [savingFavicon, setSavingFavicon] = useState(false);
 
     // Form state
     const [name, setName] = useState("");
     const [lightVars, setLightVars] = useState({ ...DEFAULT_LIGHT });
     const [darkVars, setDarkVars] = useState({ ...DEFAULT_DARK });
-    const [logoLightFile, setLogoLightFile] = useState(null);
-    const [logoDarkFile, setLogoDarkFile] = useState(null);
+    const [logoLightSelection, setLogoLightSelection] = useState(null);
+    const [logoDarkSelection, setLogoDarkSelection] = useState(null);
     const [logoLightPreview, setLogoLightPreview] = useState(null);
     const [logoDarkPreview, setLogoDarkPreview] = useState(null);
     const [invertLogoDark, setInvertLogoDark] = useState(false);
@@ -610,6 +619,69 @@ export default function PersonalizacaoPage() {
         refreshPresets();
         refreshActive();
     }, [refreshPresets, refreshActive]);
+
+    useEffect(() => {
+        if (!logoLightSelection) {
+            setLogoLightPreview(null);
+            return undefined;
+        }
+
+        if (logoLightSelection.source === "library") {
+            setLogoLightPreview(logoLightSelection.url || null);
+            return undefined;
+        }
+
+        if (logoLightSelection.file) {
+            const objectUrl = URL.createObjectURL(logoLightSelection.file);
+            setLogoLightPreview(objectUrl);
+            return () => URL.revokeObjectURL(objectUrl);
+        }
+
+        setLogoLightPreview(null);
+        return undefined;
+    }, [logoLightSelection]);
+
+    useEffect(() => {
+        if (!logoDarkSelection) {
+            setLogoDarkPreview(null);
+            return undefined;
+        }
+
+        if (logoDarkSelection.source === "library") {
+            setLogoDarkPreview(logoDarkSelection.url || null);
+            return undefined;
+        }
+
+        if (logoDarkSelection.file) {
+            const objectUrl = URL.createObjectURL(logoDarkSelection.file);
+            setLogoDarkPreview(objectUrl);
+            return () => URL.revokeObjectURL(objectUrl);
+        }
+
+        setLogoDarkPreview(null);
+        return undefined;
+    }, [logoDarkSelection]);
+
+    useEffect(() => {
+        if (!faviconSelection) {
+            setFaviconPreview(null);
+            return undefined;
+        }
+
+        if (faviconSelection.source === "library") {
+            setFaviconPreview(faviconSelection.url || null);
+            return undefined;
+        }
+
+        if (faviconSelection.file) {
+            const objectUrl = URL.createObjectURL(faviconSelection.file);
+            setFaviconPreview(objectUrl);
+            return () => URL.revokeObjectURL(objectUrl);
+        }
+
+        setFaviconPreview(null);
+        return undefined;
+    }, [faviconSelection]);
 
     useEffect(() => {
         let mounted = true;
@@ -632,6 +704,30 @@ export default function PersonalizacaoPage() {
         };
 
         loadLandingContent();
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const loadFavicon = async () => {
+            try {
+                const res = await fetch(`${API}/theme/favicon`, { cache: "no-store" });
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!mounted || !json?.success) return;
+
+                const faviconPath = relativePathFromUploadsUrl(json.data?.path || json.data?.url || "");
+                setFaviconSelection(createLibrarySelection(faviconPath));
+                setFaviconPreview(json.data?.url || null);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+        loadFavicon();
         return () => {
             mounted = false;
         };
@@ -662,14 +758,45 @@ export default function PersonalizacaoPage() {
         }
     };
 
+    const handleSaveFavicon = async () => {
+        setSavingFavicon(true);
+        try {
+            const faviconAsset = await resolveMediaSelection(faviconSelection, "logos");
+            const res = await fetch(`${API}/theme/favicon`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
+                },
+                body: JSON.stringify({
+                    faviconPath: faviconAsset?.path || "",
+                }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json?.success) {
+                throw new Error(json?.message || "Erro ao atualizar favicon");
+            }
+
+            const faviconPath = relativePathFromUploadsUrl(json.data?.path || json.data?.url || "");
+            setFaviconSelection(createLibrarySelection(faviconPath));
+            setFaviconPreview(json.data?.url || null);
+            await refreshFavicon();
+        } catch (err) {
+            console.error(err);
+            alert(err.message || "Erro ao atualizar favicon");
+        } finally {
+            setSavingFavicon(false);
+        }
+    };
+
     /* open dialog for create */
     const openCreate = () => {
         setEditingPreset(null);
         setName("");
         setLightVars({ ...DEFAULT_LIGHT });
         setDarkVars({ ...DEFAULT_DARK });
-        setLogoLightFile(null);
-        setLogoDarkFile(null);
+        setLogoLightSelection(null);
+        setLogoDarkSelection(null);
         setLogoLightPreview(null);
         setLogoDarkPreview(null);
         setInvertLogoDark(false);
@@ -684,24 +811,14 @@ export default function PersonalizacaoPage() {
         setName(preset.name);
         setLightVars({ ...DEFAULT_LIGHT, ...(preset.lightVars || {}) });
         setDarkVars({ ...DEFAULT_DARK, ...(preset.darkVars || {}) });
-        setLogoLightFile(null);
-        setLogoDarkFile(null);
+        setLogoLightSelection(createLibrarySelection(relativePathFromUploadsUrl(preset.logoLightUrl)));
+        setLogoDarkSelection(createLibrarySelection(relativePathFromUploadsUrl(preset.logoDarkUrl)));
         setLogoLightPreview(resolveLogoUrl(preset.logoLightUrl) || null);
         setLogoDarkPreview(resolveLogoUrl(preset.logoDarkUrl) || null);
         setInvertLogoDark(!!preset?.darkVars?.invertLogoDark);
         setEditMode("light");
         setEditorVariant("simple");
         setDialogOpen(true);
-    };
-
-    /* handle file preview */
-    const handleLogoLight = (file) => {
-        setLogoLightFile(file);
-        if (file) setLogoLightPreview(URL.createObjectURL(file));
-    };
-    const handleLogoDark = (file) => {
-        setLogoDarkFile(file);
-        if (file) setLogoDarkPreview(URL.createObjectURL(file));
     };
 
     /* handle color change */
@@ -716,12 +833,16 @@ export default function PersonalizacaoPage() {
         setSaving(true);
         try {
             const darkVarsPayload = { ...darkVars, invertLogoDark };
+            const [logoLightAsset, logoDarkAsset] = await Promise.all([
+                resolveMediaSelection(logoLightSelection, "logos"),
+                resolveMediaSelection(logoDarkSelection, "logos"),
+            ]);
             const fd = new FormData();
             fd.append("name", name.trim());
             fd.append("lightVars", JSON.stringify(lightVars));
             fd.append("darkVars", JSON.stringify(darkVarsPayload));
-            if (logoLightFile) fd.append("logoLight", logoLightFile);
-            if (logoDarkFile) fd.append("logoDark", logoDarkFile);
+            fd.append("logoLightPath", logoLightAsset?.path || "");
+            fd.append("logoDarkPath", logoDarkAsset?.path || "");
 
             const url = editingPreset
                 ? `${API}/theme/update/${editingPreset.id_theme_preset}`
@@ -827,48 +948,93 @@ export default function PersonalizacaoPage() {
                         </p>
                     </div>
                     <Button onClick={openCreate}>
-                        <Plus className="w-4 h-4 mr-2" /> Novo Preset
+                        <Plus className="w-4 h-4 mr-2" /> Novo Tema
                     </Button>
                 </div>
 
-                {/* Preset cards grid */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-lg">Texto da Homepage</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div>
-                            <label className="text-sm font-medium">Título principal</label>
-                            <input
-                                type="text"
-                                value={landingTitle}
-                                onChange={(e) => setLandingTitle(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                            />
-                        </div>
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)] gap-6 items-start">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="text-lg">Texto da Homepage</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div>
+                                <label className="text-sm font-medium">Título principal</label>
+                                <input
+                                    type="text"
+                                    value={landingTitle}
+                                    onChange={(e) => setLandingTitle(e.target.value)}
+                                    className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                />
+                            </div>
 
-                        <div>
-                            <label className="text-sm font-medium">Descrição</label>
-                            <textarea
-                                value={landingDescription}
-                                onChange={(e) => setLandingDescription(e.target.value)}
-                                rows={4}
-                                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-y"
-                            />
-                        </div>
+                            <div>
+                                <label className="text-sm font-medium">Descrição</label>
+                                <textarea
+                                    value={landingDescription}
+                                    onChange={(e) => setLandingDescription(e.target.value)}
+                                    rows={4}
+                                    className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-y"
+                                />
+                            </div>
 
-                        <div className="flex justify-end">
-                            <Button onClick={handleSaveLandingContent} disabled={savingLandingText || !landingTitle.trim() || !landingDescription.trim()}>
-                                {savingLandingText ? "A guardar..." : "Guardar texto"}
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                            <div className="flex justify-end">
+                                <Button onClick={handleSaveLandingContent} disabled={savingLandingText || !landingTitle.trim() || !landingDescription.trim()}>
+                                    {savingLandingText ? "A guardar..." : "Guardar texto"}
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="text-lg">Favicon do Website</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <MediaSourceField
+                                label="Favicon"
+                                accept="image/png,image/jpeg,image/svg+xml,image/webp,.ico"
+                                selection={faviconSelection}
+                                onChange={setFaviconSelection}
+                                destinationPath="logos"
+                            />
+
+                            <div className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background">
+                                    {faviconPreview ? (
+                                        <img src={faviconPreview} alt="Preview favicon" className="h-6 w-6 object-contain" />
+                                    ) : (
+                                        <span className="text-xs text-muted-foreground">Sem</span>
+                                    )}
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                    O favicon aparece no separador do browser e nos favoritos.
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setFaviconSelection(null);
+                                        setFaviconPreview(null);
+                                    }}
+                                    disabled={savingFavicon}
+                                >
+                                    Limpar
+                                </Button>
+                                <Button onClick={handleSaveFavicon} disabled={savingFavicon}>
+                                    {savingFavicon ? "A guardar..." : "Guardar favicon"}
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
 
                 {presets.length === 0 ? (
                     <Card>
                         <CardContent className="py-12 text-center text-muted-foreground">
-                            Ainda não criou nenhum preset de tema. Clique em &quot;Novo Preset&quot; para começar.
+                            Ainda não criou nenhum preset de tema. Clique em &quot;Novo Tema&quot; para começar.
                         </CardContent>
                     </Card>
                 ) : (
@@ -945,14 +1111,14 @@ export default function PersonalizacaoPage() {
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogContent className="max-w-[95vw] w-full lg:max-w-7xl max-h-[95vh] overflow-y-auto p-4 sm:p-5">
                         <DialogHeader>
-                            <DialogTitle>{editingPreset ? `Editar "${editingPreset.name}"` : "Novo Preset"}</DialogTitle>
+                            <DialogTitle>{editingPreset ? `Editar "${editingPreset.name}"` : "Novo Tema"}</DialogTitle>
                         </DialogHeader>
 
                         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4">
                             <div className="space-y-3 min-w-0 h-[620px]">
                                 {/* Name */}
                                 <div>
-                                    <label className="text-sm font-medium">Nome do Preset</label>
+                                    <label className="text-sm font-medium">Nome do Tema</label>
                                     <input
                                         type="text"
                                         value={name}
@@ -966,13 +1132,19 @@ export default function PersonalizacaoPage() {
                                 <div className="space-y-2">
                                     <h3 className="text-sm font-medium">Logos por Tema</h3>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                                        <LogoUploadRow label="Logo (modo claro)" previewUrl={logoLightPreview} onFile={handleLogoLight} />
-                                        <LogoUploadRow
+                                        <MediaSourceField
+                                            label="Logo (modo claro)"
+                                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                            selection={logoLightSelection}
+                                            onChange={setLogoLightSelection}
+                                            destinationPath="logos"
+                                        />
+                                        <MediaSourceField
                                             label="Logo (modo escuro)"
-                                            previewUrl={logoDarkPreview}
-                                            onFile={handleLogoDark}
-                                            invertPreview={invertLogoDark}
-                                            darkBackground
+                                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                            selection={logoDarkSelection}
+                                            onChange={setLogoDarkSelection}
+                                            destinationPath="logos"
                                         />
                                     </div>
                                     <div className="flex items-center justify-between rounded-md border border-border px-3 py-1.5">

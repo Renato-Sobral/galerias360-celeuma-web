@@ -8,6 +8,7 @@ import DataTable from "../components/DataTable";
 import CustomDialog from "../components/CustomDialog";
 import DropdownSingle from "../components/select";
 import StatisticsCards from "../components/StatisticsCards";
+import DashboardCharts from "../components/DashboardCharts";
 
 const API = process.env.NEXT_PUBLIC_API_URL;
 const getSwal = () => import("sweetalert2").then((m) => m.default);
@@ -227,8 +228,9 @@ function Dashboard({ userRole }) {
         </h1>
 
         {isAdmin && (
-          <div className="mb-6">
+          <div className="mb-6 space-y-6">
             <StatisticsCards />
+            <DashboardCharts />
           </div>
         )}
 

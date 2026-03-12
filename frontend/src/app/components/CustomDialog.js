@@ -13,17 +13,22 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export default function CustomDialog({
   trigger = null,
   title = "Confirmação",
   description = "",
   children,
-  onConfirm = () => {},
+  onConfirm = () => { },
   confirmLabel = "Confirmar",
   cancelLabel = "Cancelar",
   open,
   onOpenChange,
+  contentClassName,
+  headerClassName,
+  bodyClassName,
+  footerClassName,
 }) {
   // 🔧 Corrigir pointer-events: none após fechar
   useEffect(() => {
@@ -49,15 +54,15 @@ export default function CustomDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       {trigger && <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>}
 
-      <AlertDialogContent>
-        <AlertDialogHeader>
+      <AlertDialogContent className={cn("max-h-[90vh] overflow-hidden", contentClassName)}>
+        <AlertDialogHeader className={headerClassName}>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
         </AlertDialogHeader>
 
-        {children && <div className="mt-2">{children}</div>}
+        {children && <div className={cn("mt-2 overflow-y-auto", bodyClassName)}>{children}</div>}
 
-        <AlertDialogFooter>
+        <AlertDialogFooter className={footerClassName}>
           <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction asChild>
             <Button onClick={onConfirm}>{confirmLabel}</Button>

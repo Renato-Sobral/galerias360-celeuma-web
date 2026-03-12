@@ -1,7 +1,17 @@
 const Ponto = require('../models/ponto');
+const CategoriaPonto = require('../models/categoria_ponto');
+const Visualizacao = require('../models/estatistica');
 const multer = require('multer');
 const logger = require('../models/logger');
 const crypto = require('crypto');
+const { Sequelize } = require('sequelize');
+const {
+    normalizeUploadsRelativePath,
+    getPublicUploadUrl,
+    readUploadFileBuffer,
+    saveBufferToUploads,
+    uploadFileExists,
+} = require('../utils/mediaLibrary');
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage }).single('image');
@@ -34,6 +44,95 @@ function encrypt(buffer) {
     };
 }
 
+function parseCategoriaIds(input) {
+    if (input === undefined || input === null || input === '') return [];
+
+    if (Array.isArray(input)) {
+        return [...new Set(input.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    }
+
+    if (typeof input === 'number') {
+        return Number.isInteger(input) && input > 0 ? [input] : [];
+    }
+
+    if (typeof input === 'string') {
+        const trimmed = input.trim();
+        if (!trimmed) return [];
+
+        if (trimmed.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                return parseCategoriaIds(parsed);
+            } catch {
+                return [];
+            }
+        }
+
+        if (trimmed.includes(',')) {
+            return parseCategoriaIds(trimmed.split(','));
+        }
+
+        const parsed = Number(trimmed);
+        return Number.isInteger(parsed) && parsed > 0 ? [parsed] : [];
+    }
+
+    return [];
+}
+
+function resolveImagePayload(req) {
+    if (req.file?.buffer) {
+        const storedPath = saveBufferToUploads(req.file.buffer, {
+            destinationDir: 'pontos',
+            originalName: req.file.originalname,
+        });
+        return {
+            imagePath: storedPath,
+        };
+    }
+
+    const imagePath = normalizeUploadsRelativePath(req.body.imagePath || '');
+    if (!imagePath) {
+        return {
+            imagePath: null,
+        };
+    }
+
+    readUploadFileBuffer(imagePath);
+    return { imagePath };
+}
+
+function serializePonto(ponto, options = {}) {
+    const { includeLegacyImage = true, visualizacoes = 0 } = options;
+    const raw = typeof ponto.toJSON === 'function' ? ponto.toJSON() : { ...ponto };
+
+    let legacyBase64 = null;
+    if (includeLegacyImage && raw.image && raw.iv) {
+        try {
+            const decryptedBuffer = decrypt(raw.image, raw.iv);
+            legacyBase64 = decryptedBuffer.toString('base64');
+        } catch (err) {
+            console.error(`Erro ao desencriptar imagem do ponto ${raw.id_ponto}:`, err);
+        }
+    }
+
+    const hasFileManagerImage = raw.imagePath && uploadFileExists(raw.imagePath);
+    const imageUrl = hasFileManagerImage ? getPublicUploadUrl(raw.imagePath) : null;
+
+    return {
+        ...raw,
+        image: legacyBase64,
+        imageUrl,
+        environment: imageUrl || legacyBase64 || null,
+        visualizacoes,
+    };
+}
+
+async function validateCategoriasExistem(categoriaIds) {
+    if (!categoriaIds.length) return false;
+    const count = await CategoriaPonto.count({ where: { id_categoria: categoriaIds } });
+    return count === categoriaIds.length;
+}
+
 exports.createPonto = (req, res) => {
     upload(req, res, async (err) => {
         if (err) {
@@ -42,24 +141,39 @@ exports.createPonto = (req, res) => {
         }
 
         const { name, description, latitude, longitude, username } = req.body;
+        const categoriaIds = parseCategoriaIds(req.body.id_categorias ?? req.body.id_categoria);
+
+        if (!name || !latitude || !longitude) {
+            return res.status(400).json({ error: 'Nome, latitude e longitude são obrigatórios' });
+        }
+
+        if (!categoriaIds.length) {
+            return res.status(400).json({ error: 'Pelo menos uma categoria é obrigatória' });
+        }
 
         try {
-            let encryptedImage = null;
-            let iv = null;
-
-            if (req.file && req.file.buffer) {
-                const { encryptedBuffer, iv: ivHex } = encrypt(req.file.buffer);
-                encryptedImage = encryptedBuffer;
-                iv = ivHex;
+            const categoriasValidas = await validateCategoriasExistem(categoriaIds);
+            if (!categoriasValidas) {
+                return res.status(400).json({ error: 'Categoria inválida' });
             }
+
+            const { imagePath } = resolveImagePayload(req);
 
             const novoPonto = await Ponto.create({
                 name,
                 description,
                 latitude,
                 longitude,
-                image: encryptedImage,
-                iv: iv
+                id_categoria: categoriaIds[0],
+                image: null,
+                imagePath,
+                iv: null,
+            });
+
+            await novoPonto.setCategorias(categoriaIds);
+
+            const novoPontoComCategorias = await Ponto.findByPk(novoPonto.id_ponto, {
+                include: [{ model: CategoriaPonto, as: 'categorias', attributes: ['id_categoria', 'name'], through: { attributes: [] } }],
             });
 
             const logMessage = `${username} criou um novo ponto`;
@@ -71,7 +185,7 @@ exports.createPonto = (req, res) => {
 
             return res.status(201).json({
                 message: 'Ponto criado com sucesso',
-                ponto: novoPonto
+                ponto: serializePonto(novoPontoComCategorias)
             });
         } catch (error) {
             console.error("Erro no createPonto:", error);
@@ -89,25 +203,40 @@ function decrypt(encryptedBuffer, ivHex) {
 
 exports.listPontos = async (req, res) => {
     try {
-        const pontos = await Ponto.findAll();
+        const [pontos, visualizacoesPorPonto] = await Promise.all([
+            Ponto.findAll({
+                attributes: {
+                    exclude: ['image', 'iv'],
+                },
+                include: [
+                    {
+                        model: CategoriaPonto,
+                        as: 'categorias',
+                        attributes: ['id_categoria', 'name'],
+                        through: { attributes: [] },
+                    },
+                ],
+            }),
+            Visualizacao.findAll({
+                where: { tipo: 'ponto' },
+                attributes: [
+                    'referencia_id',
+                    [Sequelize.fn('COUNT', Sequelize.col('id_visualizacao')), 'total'],
+                ],
+                group: ['referencia_id'],
+                raw: true,
+            }),
+        ]);
 
-        const pontosComImagens = pontos.map(ponto => {
-            let imageBase64 = null;
+        const visualizacoesMap = visualizacoesPorPonto.reduce((acc, item) => {
+            acc[String(item.referencia_id)] = Number.parseInt(item.total, 10) || 0;
+            return acc;
+        }, {});
 
-            if (ponto.image && ponto.iv) {
-                try {
-                    const decryptedBuffer = decrypt(ponto.image, ponto.iv);
-                    imageBase64 = decryptedBuffer.toString('base64');
-                } catch (err) {
-                    console.error(`Erro ao desencriptar imagem do ponto ${ponto.id_ponto}:`, err);
-                }
-            }
-
-            return {
-                ...ponto.toJSON(),
-                image: imageBase64
-            };
-        });
+        const pontosComImagens = pontos.map((ponto) => serializePonto(ponto, {
+            includeLegacyImage: false,
+            visualizacoes: visualizacoesMap[String(ponto.id_ponto)] || 0,
+        }));
 
         return res.status(200).json({ pontos: pontosComImagens });
     } catch (error) {
@@ -119,28 +248,23 @@ exports.listPontos = async (req, res) => {
 exports.getPontoById = async (req, res) => {
     try {
         const { id } = req.params;
-        const ponto = await Ponto.findByPk(id);
+        const ponto = await Ponto.findByPk(id, {
+            include: [
+                {
+                    model: CategoriaPonto,
+                    as: 'categorias',
+                    attributes: ['id_categoria', 'name'],
+                    through: { attributes: [] },
+                },
+            ],
+        });
 
         if (!ponto) {
             return res.status(404).json({ message: 'Ponto não encontrado' });
         }
 
-        let imageBase64 = null;
-
-        if (ponto.image && ponto.iv) {
-            try {
-                const decryptedBuffer = decrypt(ponto.image, ponto.iv);
-                imageBase64 = decryptedBuffer.toString('base64');
-            } catch (err) {
-                console.error(`Erro ao desencriptar imagem do ponto ${ponto.id_ponto}:`, err);
-            }
-        }
-
         return res.json({
-            ponto: {
-                ...ponto.toJSON(),
-                image: imageBase64
-            }
+            ponto: serializePonto(ponto)
         });
 
     } catch (error) {
@@ -158,6 +282,7 @@ exports.updatePonto = (req, res) => {
 
         const { id_ponto } = req.params;
         const { name, description, latitude, longitude } = req.body;
+        const categoriaIdsRaw = req.body.id_categorias ?? req.body.id_categoria;
 
         try {
             const ponto = await Ponto.findByPk(id_ponto);
@@ -166,10 +291,29 @@ exports.updatePonto = (req, res) => {
                 return res.status(404).json({ error: "Ponto não encontrado" });
             }
 
-            if (req.file && req.file.buffer) {
-                const { encryptedBuffer, iv: ivHex } = encrypt(req.file.buffer);
-                ponto.image = encryptedBuffer;
-                ponto.iv = ivHex;
+            if (categoriaIdsRaw !== undefined) {
+                const categoriaIds = parseCategoriaIds(categoriaIdsRaw);
+                if (!categoriaIds.length) {
+                    return res.status(400).json({ error: 'Pelo menos uma categoria é obrigatória' });
+                }
+
+                const categoriasValidas = await validateCategoriasExistem(categoriaIds);
+                if (!categoriasValidas) {
+                    return res.status(400).json({ error: 'Categoria inválida' });
+                }
+                await ponto.setCategorias(categoriaIds);
+                ponto.id_categoria = categoriaIds[0];
+            }
+
+            const { imagePath } = resolveImagePayload(req);
+            if (imagePath) {
+                ponto.image = null;
+                ponto.iv = null;
+                ponto.imagePath = imagePath;
+            } else if (req.body.imagePath !== undefined) {
+                ponto.image = null;
+                ponto.iv = null;
+                ponto.imagePath = imagePath || null;
             }
 
             ponto.name = name ?? ponto.name;
@@ -179,10 +323,21 @@ exports.updatePonto = (req, res) => {
 
             await ponto.save();
 
+            const pontoAtualizado = await Ponto.findByPk(id_ponto, {
+                include: [
+                    {
+                        model: CategoriaPonto,
+                        as: 'categorias',
+                        attributes: ['id_categoria', 'name'],
+                        through: { attributes: [] },
+                    },
+                ],
+            });
+
             const logMessage = `Ponto com ID ${id_ponto} foi atualizado`;
             logger.info(logMessage);
 
-            return res.status(200).json({ message: "Ponto atualizado com sucesso", ponto });
+            return res.status(200).json({ message: "Ponto atualizado com sucesso", ponto: serializePonto(pontoAtualizado) });
         } catch (error) {
             console.error("Erro ao atualizar ponto:", error);
             return res.status(500).json({ error: "Erro ao atualizar ponto" });

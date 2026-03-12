@@ -6,13 +6,15 @@ import L from "leaflet";
 import "leaflet-routing-machine";
 import Swal from "sweetalert2";
 
-const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatisticaRotaId }) => {
+const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady }) => {
   const map = useMap();
   const controlRef = useRef(null);
   const clickLayersRef = useRef([]);
   const onClickRef = useRef(onClick);
+  const onRouteReadyRef = useRef(onRouteReady);
   const videoInsertedRef = useRef(false);
   const hasRouteDetailsRef = useRef(false);
+  const routeReadyNotifiedRef = useRef(false);
 
   // Estados para controlar modal e URL do vídeo
   const [modalOpen, setModalOpen] = useState(false);
@@ -41,6 +43,8 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
   }, [coordinatesSignature]);
 
   const handlePlayClick = async () => {
+    if (!rotaId) return;
+
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/trajeto/video/${rotaId}`);
       if (!response.ok) throw new Error("Erro ao buscar vídeo");
@@ -65,6 +69,10 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
     onClickRef.current = onClick;
   }, [onClick]);
 
+  useEffect(() => {
+    onRouteReadyRef.current = onRouteReady;
+  }, [onRouteReady]);
+
   const clearClickLayers = () => {
     clickLayersRef.current.forEach((layer) => {
       if (map.hasLayer(layer)) {
@@ -76,6 +84,8 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
 
   useEffect(() => {
     if (!map || waypointsFromSignature.length < 2) return;
+
+    routeReadyNotifiedRef.current = false;
 
     if (!controlRef.current) {
       const control = L.Routing.control({
@@ -97,6 +107,11 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
       });
 
       control.on("routesfound", (e) => {
+        if (!routeReadyNotifiedRef.current) {
+          onRouteReadyRef.current?.();
+          routeReadyNotifiedRef.current = true;
+        }
+
         hasRouteDetailsRef.current = true;
         clearClickLayers();
 
@@ -117,6 +132,10 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
             L.DomEvent.stopPropagation(event);
           }
 
+          onClickRef.current?.();
+
+          if (!showDetails) return;
+
           const container = control._container;
           if (!container) return;
 
@@ -125,11 +144,10 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
 
           const isDark = document.documentElement.classList.contains("dark");
 
-          onClickRef.current?.();
-
           const statsRouteId = estatisticaRotaId ?? rotaId;
+          const canRegisterStats = Number.isFinite(Number(statsRouteId)) && Number(statsRouteId) > 0;
           const key = `viewed-rota-${statsRouteId}`;
-          if (!sessionStorage.getItem(key)) {
+          if (canRegisterStats && !sessionStorage.getItem(key)) {
             fetch(`${process.env.NEXT_PUBLIC_API_URL}/estatistica/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -191,7 +209,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
             document.head.appendChild(style);
           }
 
-          if (!videoInsertedRef.current) {
+          if (rotaId && !videoInsertedRef.current) {
             const alt = container.querySelector(".leaflet-routing-alt");
             if (alt && !alt.querySelector(".video-play-button")) {
               const h3 = alt.querySelector("h3");
@@ -270,6 +288,11 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
       });
 
       control.on("routingerror", () => {
+        if (!routeReadyNotifiedRef.current) {
+          onRouteReadyRef.current?.();
+          routeReadyNotifiedRef.current = true;
+        }
+
         hasRouteDetailsRef.current = false;
         clearClickLayers();
 
@@ -303,6 +326,8 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
   }, [map, coordinatesSignature, waypointsFromSignature, rotaId, estatisticaRotaId]);
 
   useEffect(() => {
+    if (!showDetails) return;
+
     const container = controlRef.current?._container;
     if (container) {
       const canShow = active && hasRouteDetailsRef.current;
@@ -314,7 +339,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
         container.classList.add("leaflet-routing-container-hide");
       }
     }
-  }, [active]);
+  }, [active, showDetails]);
 
   return (
     <>

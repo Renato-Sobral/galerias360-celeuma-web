@@ -12,9 +12,8 @@ const AFrameComponent = dynamic(
 export default function Hotspot() {
   const { id } = useParams();
   const pontoId = typeof id === "string" ? id : String(id);
-  const [image, setImage] = useState(null);
+  const [environment, setEnvironment] = useState(null);
   const [error, setError] = useState("");
-  const [hotspots, setHotspots] = useState([]);
 
   useEffect(() => {
     if (!pontoId) return;
@@ -26,8 +25,8 @@ export default function Hotspot() {
         if (!response.ok) throw new Error("Erro ao buscar o ponto");
 
         const data = await response.json();
-        if (data?.ponto?.image) {
-          setImage(`data:image/jpeg;base64,${data.ponto.image}`);
+        if (data?.ponto?.environment) {
+          setEnvironment(data.ponto.environment);
         } else {
           setError("Imagem não encontrada.");
         }
@@ -43,8 +42,8 @@ export default function Hotspot() {
   return (
     <div className="flex min-h-screen">
       <div className="flex-1 overflow-hidden relative">
-        {image ? (
-          <AFrameComponent imageUrl={image} enableContextMenu pontoId={pontoId}/>
+        {environment ? (
+          <AFrameComponent environment={environment} enableContextMenu pontoId={pontoId} />
         ) : (
           <div className="p-4 text-red-600">{error || "A carregar imagem..."}</div>
         )}

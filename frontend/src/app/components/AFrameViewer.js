@@ -9,6 +9,16 @@ import DropdownSingle from "./select";
 import Swal from "sweetalert2";
 
 const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
+  const API_BASE =
+    (typeof process.env.NEXT_PUBLIC_API_URL === "string" && process.env.NEXT_PUBLIC_API_URL.trim())
+      ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+      : "";
+
+  const buildApiUrl = (path) => {
+    if (!API_BASE) return path;
+    return `${API_BASE}${path}`;
+  };
+
   const sceneRef = useRef(null);
   const [hotspots, setHotspots] = useState([]);
   const clickEventRef = useRef(null);
@@ -16,7 +26,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editTipo, setEditTipo] = useState("");
   const [editConteudo, setEditConteudo] = useState("");
-  const parsedEnvironment = base64ToBlob(environment);
+  const parsedEnvironment = parseEnvironment(environment);
   const videoRef = useRef(null);
   const [videoReady, setVideoReady] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -54,24 +64,25 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
   };
 
   useEffect(() => {
-    if (!detectBase64Type(environment).startsWith('video/')) return;
+    if (!parsedEnvironment?.mime?.startsWith('video/')) return;
     const videoEl = videoRef.current;
     if (!videoEl) return;
 
     const handleCanPlay = () => setVideoReady(true);
     videoEl.addEventListener('canplay', handleCanPlay);
-    
+
     // forçar autoplay
     videoEl.play().catch(() => {
       console.log('Autoplay bloqueado, precisa interação do usuário');
     });
 
     return () => videoEl.removeEventListener('canplay', handleCanPlay);
-  }, [environment]);
+  }, [parsedEnvironment?.mime]);
   /*END Environment video handler*/
 
   /*START Environment file handler*/
   function detectBase64Type(base64) {
+    if (!base64 || typeof base64 !== 'string') return 'application/octet-stream';
     const firstBytes = atob(base64.slice(0, 64)); // decodifica os primeiros 64 chars
     const hex = Array.from(firstBytes)
       .map(c => c.charCodeAt(0).toString(16).padStart(2, "0"))
@@ -88,7 +99,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
 
     return "application/octet-stream"; // fallback
   }
-  
+
   function base64ToBlob(base64) {
     const mimeType = detectBase64Type(base64);
 
@@ -104,6 +115,28 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
     const url = URL.createObjectURL(blob);
 
     return { url, mime: mimeType };
+  }
+
+  function inferMimeFromUrl(url) {
+    const lowerUrl = String(url || '').toLowerCase();
+    if (/\.(png|jpg|jpeg|gif|webp|bmp|svg|avif)(\?|$)/.test(lowerUrl)) return 'image/jpeg';
+    if (/\.(mp4|webm|mov|avi|mkv|m4v)(\?|$)/.test(lowerUrl)) return 'video/mp4';
+    return 'application/octet-stream';
+  }
+
+  function parseEnvironment(value) {
+    if (!value) return null;
+
+    if (typeof value === 'object' && value.url) {
+      return { url: value.url, mime: value.mime || inferMimeFromUrl(value.url), mode: 'url' };
+    }
+
+    if (typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('/') || value.startsWith('blob:') || value.startsWith('data:'))) {
+      return { url: value, mime: inferMimeFromUrl(value), mode: 'url' };
+    }
+
+    const blobData = base64ToBlob(value);
+    return { ...blobData, mode: 'base64', raw: value };
   }
   /*END Environment file handler*/
 
@@ -138,13 +171,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
     ),
 
     imagem: (conteudo) => (
-      <a-image 
-        src={conteudo} 
+      <a-image
+        src={conteudo}
         position="5 15 25"
-        width="400" 
-        height="200" 
+        width="400"
+        height="200"
         opacity="1"
-        transparent="false"  
+        transparent="false"
         look-at="[camera]"
       />
     ),
@@ -197,14 +230,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
 
     link: (conteudo) => (
       <>
-          <a-sphere position="0 0 0" radius="16" color="#ff2e63" />
-          <a-link
-            href={conteudo}
-            title={conteudo}
-            position="0 0 0.5"
-            scale="16 16 1"
-            look-at="[camera]"
-          />
+        <a-sphere position="0 0 0" radius="16" color="#ff2e63" />
+        <a-link
+          href={conteudo}
+          title={conteudo}
+          position="0 0 0.5"
+          scale="16 16 1"
+          look-at="[camera]"
+        />
       </>
     ),
   };
@@ -218,7 +251,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
 
   const fetchHotspots = async () => {
     try {
-      const res = await fetch("http://localhost:3000/hotspot/");
+      const res = await fetch(buildApiUrl("/hotspot/"));
       const data = await res.json();
       if (Array.isArray(data)) {
         const doPonto = data.filter(
@@ -320,7 +353,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
     }
 
     try {
-      const res = await fetch("http://localhost:3000/hotspot/add", {
+      const res = await fetch(buildApiUrl("/hotspot/add"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -359,7 +392,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`http://localhost:3000/hotspot/${id}`, {
+      const res = await fetch(buildApiUrl(`/hotspot/${id}`), {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Erro ao eliminar hotspot");
@@ -398,7 +431,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`http://localhost:3000/hotspot/${selectedHotspot.id}`, {
+      const res = await fetch(buildApiUrl(`/hotspot/${selectedHotspot.id}`), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tipo: editTipo, conteudo: editConteudo }),
@@ -446,11 +479,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId }) => {
         cursor="rayOrigin: mouse"
       ></a-camera>
 
-      {parsedEnvironment.mime.startsWith("image/") ? (
-        <a-sky src={`data:${parsedEnvironment.mime};base64,${environment}`} rotation="0 -130 0" />
-      ) : parsedEnvironment.mime.startsWith("video/") ? (
+      {parsedEnvironment?.mime?.startsWith("image/") ? (
+        <a-sky src={parsedEnvironment.mode === 'base64' ? `data:${parsedEnvironment.mime};base64,${parsedEnvironment.raw}` : parsedEnvironment.url} rotation="0 -130 0" />
+      ) : parsedEnvironment?.mime?.startsWith("video/") ? (
         <>
-          <video style={{ 'display' : 'none' }} id="environment" ref={handleVideoRef} preload="auto" crossOrigin="anonymous" autoPlay loop muted playsInline>
+          <video style={{ 'display': 'none' }} id="environment" ref={handleVideoRef} preload="auto" crossOrigin="anonymous" autoPlay loop muted playsInline>
             <source src={parsedEnvironment.url} type={parsedEnvironment.mime}></source>
           </video>
           {videoReady && <a-sky src="#environment" rotation="0 -130 0" />}

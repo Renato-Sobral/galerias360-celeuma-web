@@ -16,7 +16,7 @@ const customIcon = L.divIcon({
   `,
 });
 
-export default function CustomMarker({ id, latitude, longitude, name, image, description, views, eventHandlers, onAddTrajeto }) {
+export default function CustomMarker({ id, latitude, longitude, name, image, imageUrl, description, categoryName, views, eventHandlers, onAddTrajeto }) {
 
   const router = useRouter();
 
@@ -28,6 +28,8 @@ export default function CustomMarker({ id, latitude, longitude, name, image, des
     event.stopPropagation();
     onAddTrajeto?.();
   };
+
+  const previewSrc = imageUrl || (image ? `data:image/jpeg;base64,${image}` : null);
 
   return (
     <Marker position={[parseFloat(latitude), parseFloat(longitude)]} icon={customIcon} eventHandlers={eventHandlers}>
@@ -49,10 +51,10 @@ export default function CustomMarker({ id, latitude, longitude, name, image, des
           )}
 
           <div className="relative h-[148px] w-full overflow-hidden bg-muted">
-            {image ? (
+            {previewSrc ? (
               <img
                 alt={name}
-                src={`data:image/jpeg;base64,${image}`}
+                src={previewSrc}
                 className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
               />
             ) : (
@@ -77,6 +79,9 @@ export default function CustomMarker({ id, latitude, longitude, name, image, des
               }}
             >
               {description || "Sem descrição disponível"}
+            </p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/70">
+              Categoria: {categoryName || "Sem categoria"}
             </p>
             <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/70">
               {views ?? 0} visualizações

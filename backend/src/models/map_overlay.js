@@ -14,6 +14,10 @@ const MapOverlay = sequelize.define('map_overlay', {
     conteudo: {
         type: DataTypes.BLOB('long'),
         allowNull: false
+    },
+    mediaPath: {
+        type: DataTypes.STRING,
+        allowNull: true
     }
 }, {
     tableName: "map_overlay",
