@@ -177,232 +177,23 @@ const VAR_GROUPS = [
     { label: "Gráficos", keys: ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] },
 ];
 
-const SIMPLE_SCHEMES = [
-    {
-        id: "default",
-        name: "Predefinido",
-        description: "Visual original da aplicação",
-        lightVars: { ...DEFAULT_LIGHT },
-        darkVars: { ...DEFAULT_DARK },
-    },
-    {
-        id: "corporate-blue",
-        name: "Azul Corporativo",
-        description: "Tons profissionais e neutros",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "221 83% 53%",
-            "primary-foreground": "0 0% 100%",
-            secondary: "213 27% 92%",
-            "secondary-foreground": "221 39% 22%",
-            accent: "215 100% 96%",
-            "accent-foreground": "221 83% 38%",
-            ring: "221 83% 53%",
-            "chart-1": "221 83% 53%",
-            "chart-2": "199 89% 48%",
-            "chart-3": "173 80% 40%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "213 94% 68%",
-            "primary-foreground": "222 47% 11%",
-            secondary: "222 35% 18%",
-            "secondary-foreground": "210 40% 96%",
-            accent: "216 34% 20%",
-            "accent-foreground": "214 95% 78%",
-            ring: "213 94% 68%",
-            "chart-1": "213 94% 68%",
-            "chart-2": "199 89% 58%",
-            "chart-3": "173 74% 50%",
-        },
-    },
-    {
-        id: "emerald",
-        name: "Verde Esmeralda",
-        description: "Fresco e moderno",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "160 84% 35%",
-            "primary-foreground": "0 0% 100%",
-            secondary: "151 30% 92%",
-            "secondary-foreground": "160 67% 20%",
-            accent: "152 76% 94%",
-            "accent-foreground": "160 84% 28%",
-            ring: "160 84% 35%",
-            "chart-1": "160 84% 35%",
-            "chart-2": "173 58% 39%",
-            "chart-3": "142 71% 45%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "152 66% 56%",
-            "primary-foreground": "160 70% 10%",
-            secondary: "156 28% 16%",
-            "secondary-foreground": "149 61% 90%",
-            accent: "159 35% 20%",
-            "accent-foreground": "152 66% 70%",
-            ring: "152 66% 56%",
-            "chart-1": "152 66% 56%",
-            "chart-2": "173 58% 49%",
-            "chart-3": "142 71% 55%",
-        },
-    },
-    {
-        id: "violet",
-        name: "Violeta",
-        description: "Mais criativo e vibrante",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "262 83% 58%",
-            "primary-foreground": "0 0% 100%",
-            secondary: "265 35% 94%",
-            "secondary-foreground": "262 48% 26%",
-            accent: "270 100% 96%",
-            "accent-foreground": "262 83% 42%",
-            ring: "262 83% 58%",
-            "chart-1": "262 83% 58%",
-            "chart-2": "292 84% 61%",
-            "chart-3": "234 89% 74%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "263 89% 72%",
-            "primary-foreground": "258 48% 12%",
-            secondary: "261 32% 18%",
-            "secondary-foreground": "268 100% 93%",
-            accent: "267 30% 22%",
-            "accent-foreground": "263 89% 80%",
-            ring: "263 89% 72%",
-            "chart-1": "263 89% 72%",
-            "chart-2": "292 84% 71%",
-            "chart-3": "234 89% 74%",
-        },
-    },
-    {
-        id: "sunset-orange",
-        name: "Laranja Sunset",
-        description: "Quente e energético",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "24 95% 53%",
-            "primary-foreground": "0 0% 100%",
-            secondary: "32 68% 93%",
-            "secondary-foreground": "20 67% 22%",
-            accent: "34 100% 95%",
-            "accent-foreground": "24 95% 38%",
-            ring: "24 95% 53%",
-            "chart-1": "24 95% 53%",
-            "chart-2": "14 90% 60%",
-            "chart-3": "43 96% 56%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "28 96% 64%",
-            "primary-foreground": "24 60% 12%",
-            secondary: "24 32% 18%",
-            "secondary-foreground": "36 100% 92%",
-            accent: "21 34% 22%",
-            "accent-foreground": "28 96% 76%",
-            ring: "28 96% 64%",
-            "chart-1": "28 96% 64%",
-            "chart-2": "14 90% 66%",
-            "chart-3": "43 96% 62%",
-        },
-    },
-    {
-        id: "rose",
-        name: "Rosa Quartz",
-        description: "Suave e elegante",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "336 84% 57%",
-            "primary-foreground": "0 0% 100%",
-            secondary: "334 31% 93%",
-            "secondary-foreground": "335 42% 26%",
-            accent: "330 100% 96%",
-            "accent-foreground": "336 84% 40%",
-            ring: "336 84% 57%",
-            "chart-1": "336 84% 57%",
-            "chart-2": "315 79% 63%",
-            "chart-3": "284 82% 69%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "335 90% 70%",
-            "primary-foreground": "335 49% 13%",
-            secondary: "331 29% 18%",
-            "secondary-foreground": "330 60% 92%",
-            accent: "329 31% 22%",
-            "accent-foreground": "335 90% 81%",
-            ring: "335 90% 70%",
-            "chart-1": "335 90% 70%",
-            "chart-2": "315 79% 69%",
-            "chart-3": "284 82% 75%",
-        },
-    },
-    {
-        id: "slate-pro",
-        name: "Slate Pro",
-        description: "Minimal e técnico",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "215 25% 27%",
-            "primary-foreground": "210 40% 98%",
-            secondary: "210 22% 92%",
-            "secondary-foreground": "215 24% 26%",
-            accent: "210 24% 95%",
-            "accent-foreground": "215 25% 33%",
-            ring: "215 25% 27%",
-            "chart-1": "215 25% 27%",
-            "chart-2": "199 30% 45%",
-            "chart-3": "173 23% 39%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "210 20% 88%",
-            "primary-foreground": "222 47% 11%",
-            secondary: "217 24% 18%",
-            "secondary-foreground": "210 20% 90%",
-            accent: "217 20% 22%",
-            "accent-foreground": "210 20% 92%",
-            ring: "210 20% 88%",
-            "chart-1": "210 20% 88%",
-            "chart-2": "199 38% 62%",
-            "chart-3": "173 32% 56%",
-        },
-    },
-    {
-        id: "amber-night",
-        name: "Âmbar Noturno",
-        description: "Contraste forte e premium",
-        lightVars: {
-            ...DEFAULT_LIGHT,
-            primary: "42 96% 48%",
-            "primary-foreground": "26 75% 12%",
-            secondary: "39 45% 90%",
-            "secondary-foreground": "31 45% 22%",
-            accent: "48 100% 92%",
-            "accent-foreground": "35 92% 35%",
-            ring: "42 96% 48%",
-            "chart-1": "42 96% 48%",
-            "chart-2": "28 91% 58%",
-            "chart-3": "12 84% 60%",
-        },
-        darkVars: {
-            ...DEFAULT_DARK,
-            primary: "45 100% 66%",
-            "primary-foreground": "30 52% 11%",
-            secondary: "34 27% 17%",
-            "secondary-foreground": "48 88% 90%",
-            accent: "29 31% 21%",
-            "accent-foreground": "45 100% 78%",
-            ring: "45 100% 66%",
-            "chart-1": "45 100% 66%",
-            "chart-2": "28 91% 66%",
-            "chart-3": "12 84% 68%",
-        },
-    },
-];
+const DEFAULT_THEME_SYSTEM_KEY = "default-base";
+
+function isDefaultThemePreset(preset) {
+    return preset?.systemKey === DEFAULT_THEME_SYSTEM_KEY;
+}
+
+function sortThemePresets(a, b) {
+    const rank = (preset) => {
+        if (isDefaultThemePreset(preset)) return 0;
+        if (preset?.systemKey) return 1;
+        return 2;
+    };
+
+    const rankDiff = rank(a) - rank(b);
+    if (rankDiff !== 0) return rankDiff;
+    return (a?.name || "").localeCompare(b?.name || "", "pt");
+}
 
 /* ═══════════════════════════════════════════════════════════════
    MINI-PREVIEW COMPONENT
@@ -545,13 +336,16 @@ function LogoUploadRow({ label, previewUrl, onFile, invertPreview = false, darkB
 }
 
 function SimpleSchemeCard({ scheme, isActive, onApply }) {
-    const lightPrimary = scheme.lightVars?.primary || "0 0% 9%";
-    const lightSecondary = scheme.lightVars?.secondary || "0 0% 96.1%";
-    const lightAccent = scheme.lightVars?.accent || "0 0% 96.1%";
+    const lightVars = { ...DEFAULT_LIGHT, ...(scheme.lightVars || {}) };
+    const darkVars = { ...DEFAULT_DARK, ...(scheme.darkVars || {}) };
 
-    const darkPrimary = scheme.darkVars?.primary || "0 0% 100%";
-    const darkSecondary = scheme.darkVars?.secondary || "0 0% 5%";
-    const darkAccent = scheme.darkVars?.accent || "0 0% 5%";
+    const lightPrimary = lightVars.primary || "0 0% 9%";
+    const lightSecondary = lightVars.secondary || "0 0% 96.1%";
+    const lightAccent = lightVars.accent || "0 0% 96.1%";
+
+    const darkPrimary = darkVars.primary || "0 0% 100%";
+    const darkSecondary = darkVars.secondary || "0 0% 5%";
+    const darkAccent = darkVars.accent || "0 0% 5%";
 
     return (
         <button
@@ -562,7 +356,9 @@ function SimpleSchemeCard({ scheme, isActive, onApply }) {
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <div className="text-[15px] leading-5 font-semibold">{scheme.name}</div>
-                    <div className="text-[12px] leading-4 text-muted-foreground">{scheme.description}</div>
+                    {scheme.description && (
+                        <div className="text-[12px] leading-4 text-muted-foreground">{scheme.description}</div>
+                    )}
                 </div>
                 {isActive && <Badge variant="secondary" className="h-7 px-3">Selecionado</Badge>}
             </div>
@@ -591,6 +387,8 @@ function SimpleSchemeCard({ scheme, isActive, onApply }) {
    ═══════════════════════════════════════════════════════════════ */
 export default function PersonalizacaoPage() {
     const { presets, activePreset, refreshPresets, refreshActive, refreshFavicon } = useThemePresets();
+    const orderedPresets = [...presets].sort(sortThemePresets);
+    const starterPresets = orderedPresets.filter((preset) => !!preset.systemKey);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingPreset, setEditingPreset] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);
@@ -924,15 +722,18 @@ export default function PersonalizacaoPage() {
     const currentVars = editMode === "light" ? lightVars : darkVars;
 
     const applySimpleScheme = (scheme) => {
-        setLightVars({ ...scheme.lightVars });
-        setDarkVars((prev) => ({ ...scheme.darkVars, invertLogoDark: prev?.invertLogoDark || false }));
+        setLightVars({ ...DEFAULT_LIGHT, ...(scheme.lightVars || {}) });
+        setDarkVars({ ...DEFAULT_DARK, ...(scheme.darkVars || {}) });
+        setInvertLogoDark(!!scheme?.darkVars?.invertLogoDark);
     };
 
     const isSchemeSelected = (scheme) => {
         const keys = ["primary", "secondary", "accent"];
+        const schemeLightVars = { ...DEFAULT_LIGHT, ...(scheme.lightVars || {}) };
+        const schemeDarkVars = { ...DEFAULT_DARK, ...(scheme.darkVars || {}) };
         return (
-            keys.every((key) => lightVars[key] === scheme.lightVars[key]) &&
-            keys.every((key) => darkVars[key] === scheme.darkVars[key])
+            keys.every((key) => lightVars[key] === schemeLightVars[key]) &&
+            keys.every((key) => darkVars[key] === schemeDarkVars[key])
         );
     };
 
@@ -1031,7 +832,7 @@ export default function PersonalizacaoPage() {
                     </Card>
                 </div>
 
-                {presets.length === 0 ? (
+                {orderedPresets.length === 0 ? (
                     <Card>
                         <CardContent className="py-12 text-center text-muted-foreground">
                             Ainda não criou nenhum preset de tema. Clique em &quot;Novo Tema&quot; para começar.
@@ -1039,31 +840,7 @@ export default function PersonalizacaoPage() {
                     </Card>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {/* Default card */}
-                        <Card className={`relative overflow-hidden transition-shadow ${!activePreset ? "ring-2 ring-primary" : ""}`}>
-                            <CardHeader className="pb-2">
-                                <div className="flex items-center justify-between">
-                                    <CardTitle className="text-base">Predefinido</CardTitle>
-                                    {!activePreset && <Badge variant="secondary"><Star className="w-3 h-3 mr-1" /> Ativo</Badge>}
-                                </div>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                                <div className="grid grid-cols-2 gap-2">
-                                    <MiniPreview vars={DEFAULT_LIGHT} label="Claro" />
-                                    <MiniPreview vars={DEFAULT_DARK} label="Escuro" />
-                                </div>
-                                <div className="flex gap-2 pt-1">
-                                    {activePreset && (
-                                        <Button size="sm" variant="outline" onClick={() => handleSetActive(null)} disabled={settingActive}>
-                                            <Check className="w-4 h-4 mr-1" /> Ativar
-                                        </Button>
-                                    )}
-                                </div>
-                            </CardContent>
-                        </Card>
-
-                        {/* Preset cards */}
-                        {presets.map((p) => {
+                        {orderedPresets.map((p) => {
                             const isActive = activePreset?.id_theme_preset === p.id_theme_preset;
                             return (
                                 <Card key={p.id_theme_preset} className={`relative overflow-hidden transition-shadow ${isActive ? "ring-2 ring-primary" : ""}`}>
@@ -1089,7 +866,7 @@ export default function PersonalizacaoPage() {
 
                                         <div className="flex gap-2 pt-1">
                                             {!isActive && (
-                                                <Button size="sm" variant="outline" onClick={() => handleSetActive(p)} disabled={settingActive}>
+                                                <Button size="sm" variant="outline" onClick={() => handleSetActive(isDefaultThemePreset(p) ? null : p)} disabled={settingActive}>
                                                     <Check className="w-4 h-4 mr-1" /> Ativar
                                                 </Button>
                                             )}
@@ -1184,9 +961,9 @@ export default function PersonalizacaoPage() {
                                 {/* Left 60% content */}
                                 {editorVariant === "simple" ? (
                                     <div className="rounded-xl border border-border p-2 space-y-1.5 h-[255px] overflow-y-auto pr-1">
-                                        {SIMPLE_SCHEMES.map((scheme) => (
+                                        {starterPresets.map((scheme) => (
                                             <SimpleSchemeCard
-                                                key={scheme.id}
+                                                key={scheme.id_theme_preset}
                                                 scheme={scheme}
                                                 isActive={isSchemeSelected(scheme)}
                                                 onApply={() => applySimpleScheme(scheme)}

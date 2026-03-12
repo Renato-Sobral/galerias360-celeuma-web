@@ -8,6 +8,7 @@ const {
     estatisticasBrowsers,
     estatisticasSO,
     estatisticasTimeline,
+    historicoAcessos,
     topPontos,
 } = require('../controllers/estatisticaController');
 
@@ -17,6 +18,7 @@ router.get('/dispositivos', estatisticasDispositivos);
 router.get('/browsers', estatisticasBrowsers);
 router.get('/so', estatisticasSO);
 router.get('/timeline', estatisticasTimeline);
+router.get('/historico', historicoAcessos);
 router.get('/top-pontos', topPontos);
 router.get('/visualizacoes/:id_ponto', visualizacoesPonto);
 

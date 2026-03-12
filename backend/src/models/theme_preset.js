@@ -12,6 +12,15 @@ const ThemePreset = sequelize.define("theme_preset", {
         allowNull: false,
         unique: true,
     },
+    systemKey: {
+        type: DataTypes.STRING(120),
+        allowNull: true,
+        unique: true,
+    },
+    description: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+    },
     lightVars: {
         type: DataTypes.JSON,
         allowNull: true,

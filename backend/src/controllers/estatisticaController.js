@@ -5,6 +5,86 @@ const Trajeto = require('../models/trajeto');
 const { Sequelize, Op } = require('sequelize');
 const UAParser = require('ua-parser-js');
 
+const VALID_DEVICE_TYPES = new Set(['desktop', 'mobile', 'tablet']);
+
+function normalizeDeviceType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return VALID_DEVICE_TYPES.has(normalized) ? normalized : null;
+}
+
+function normalizeTextValue(value) {
+  const normalized = String(value || '').trim();
+  return normalized ? normalized.slice(0, 50) : null;
+}
+
+function getClientOverrides(body = {}) {
+  const clientInfo = body.clientInfo && typeof body.clientInfo === 'object' ? body.clientInfo : {};
+
+  return {
+    dispositivo: normalizeDeviceType(body.dispositivo || clientInfo.dispositivo || clientInfo.deviceType),
+    browser: normalizeTextValue(body.browser || clientInfo.browser),
+    sistema_operativo: normalizeTextValue(
+      body.sistema_operativo || body.sistemaOperativo || clientInfo.sistema_operativo || clientInfo.sistemaOperativo || clientInfo.os
+    ),
+  };
+}
+
+function inferDeviceType(req, ua, parsedResult) {
+  const hintedDevice = normalizeDeviceType(req.headers['x-device-type']);
+  if (hintedDevice) return hintedDevice;
+
+  const parsedDeviceType = normalizeDeviceType(parsedResult.device.type);
+  if (parsedDeviceType) return parsedDeviceType;
+
+  const mobileHint = req.headers['sec-ch-ua-mobile'];
+  if (mobileHint === '?1') return 'mobile';
+
+  const platformHint = String(req.headers['sec-ch-ua-platform'] || req.headers['x-device-platform'] || '').toLowerCase();
+  if (platformHint.includes('ipad')) return 'tablet';
+  if (platformHint.includes('android') || platformHint.includes('ios') || platformHint.includes('iphone')) return 'mobile';
+
+  if (/ipad|tablet|kindle|silk|playbook|sm-t|tab/i.test(ua)) return 'tablet';
+
+  if (/android|iphone|ipod|iemobile|opera mini|mobile|reactnative|react-native|expo|expogo|okhttp|cfnetwork|darwin/i.test(ua)) {
+    return 'mobile';
+  }
+
+  return 'desktop';
+}
+
+async function buildReferenceNameMaps(entries) {
+  const pontoIds = [...new Set(entries.filter((entry) => entry.tipo === 'ponto').map((entry) => entry.referencia_id))];
+  const rotaIds = [...new Set(entries.filter((entry) => entry.tipo === 'rota').map((entry) => entry.referencia_id))];
+
+  const [pontos, rotas] = await Promise.all([
+    pontoIds.length
+      ? Ponto.findAll({
+        where: { id_ponto: pontoIds },
+        attributes: ['id_ponto', 'name'],
+        raw: true,
+      })
+      : [],
+    rotaIds.length
+      ? Rota.findAll({
+        where: { id_rota: rotaIds },
+        attributes: ['id_rota', 'name'],
+        raw: true,
+      })
+      : [],
+  ]);
+
+  return {
+    pontos: pontos.reduce((acc, ponto) => {
+      acc[String(ponto.id_ponto)] = ponto.name;
+      return acc;
+    }, {}),
+    rotas: rotas.reduce((acc, rota) => {
+      acc[String(rota.id_rota)] = rota.name;
+      return acc;
+    }, {}),
+  };
+}
+
 /**
  * Deteta dispositivo, browser e SO a partir do User-Agent
  */
@@ -13,15 +93,23 @@ function parseUserAgent(req) {
   const parser = new UAParser(ua);
   const result = parser.getResult();
 
-  let dispositivo = 'desktop';
-  const deviceType = (result.device.type || '').toLowerCase();
-  if (deviceType === 'mobile') dispositivo = 'mobile';
-  else if (deviceType === 'tablet') dispositivo = 'tablet';
+  const overrides = getClientOverrides(req.body);
+  const dispositivo = overrides.dispositivo || inferDeviceType(req, ua, result);
+  const browser =
+    overrides.browser ||
+    normalizeTextValue(req.headers['x-client-browser']) ||
+    result.browser.name ||
+    'Desconhecido';
+  const sistema_operativo =
+    overrides.sistema_operativo ||
+    normalizeTextValue(req.headers['x-client-os']) ||
+    result.os.name ||
+    'Desconhecido';
 
   return {
     dispositivo,
-    browser: result.browser.name || 'Desconhecido',
-    sistema_operativo: result.os.name || 'Desconhecido',
+    browser,
+    sistema_operativo,
   };
 }
 
@@ -303,6 +391,59 @@ module.exports = {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Erro ao obter timeline de visualizações.' });
+    }
+  },
+
+  /**
+   * Histórico recente de acessos
+   */
+  historicoAcessos: async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+      const { dias } = req.query;
+      const where = {};
+
+      if (dias) {
+        const desde = new Date();
+        desde.setDate(desde.getDate() - parseInt(dias, 10));
+        where.createdAt = { [Op.gte]: desde };
+      }
+
+      const acessos = await Visualizacao.findAll({
+        where,
+        attributes: [
+          'id_visualizacao',
+          'tipo',
+          'referencia_id',
+          'dispositivo',
+          'browser',
+          'sistema_operativo',
+          'createdAt',
+        ],
+        order: [['createdAt', 'DESC']],
+        limit,
+        raw: true,
+      });
+
+      const referenceMaps = await buildReferenceNameMaps(acessos);
+
+      const historico = acessos.map((acesso) => ({
+        id_visualizacao: acesso.id_visualizacao,
+        tipo: acesso.tipo,
+        referencia_id: acesso.referencia_id,
+        referencia_nome: acesso.tipo === 'ponto'
+          ? referenceMaps.pontos[String(acesso.referencia_id)] || `Ponto #${acesso.referencia_id}`
+          : referenceMaps.rotas[String(acesso.referencia_id)] || `Rota #${acesso.referencia_id}`,
+        dispositivo: acesso.dispositivo || 'desktop',
+        browser: acesso.browser || 'Desconhecido',
+        sistema_operativo: acesso.sistema_operativo || 'Desconhecido',
+        data_hora: acesso.createdAt,
+      }));
+
+      res.json({ success: true, data: historico });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Erro ao obter histórico de acessos.' });
     }
   },
 

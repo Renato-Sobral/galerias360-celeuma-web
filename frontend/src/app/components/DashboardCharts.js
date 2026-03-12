@@ -28,7 +28,7 @@ import {
     Legend,
     ResponsiveContainer,
 } from "recharts"
-import { Monitor, Smartphone, Tablet, Globe, BarChart3, TrendingUp } from "lucide-react"
+import { Monitor, Smartphone, Tablet, Globe, BarChart3, TrendingUp, History, Clock3, Route, MapPin } from "lucide-react"
 
 const API = process.env.NEXT_PUBLIC_API_URL
 
@@ -114,6 +114,19 @@ function DeviceIcon({ type, className }) {
         default:
             return <Globe className={className} />
     }
+}
+
+function formatAccessTime(value) {
+    const date = new Date(value)
+
+    if (Number.isNaN(date.getTime())) return "Data inválida"
+
+    return new Intl.DateTimeFormat("pt-PT", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    }).format(date)
 }
 
 /**
@@ -469,6 +482,59 @@ function TopPontosChart() {
     )
 }
 
+function AccessHistoryCard() {
+    const { data, loading } = useFetchData("historico", { limit: 12, dias: 30 })
+
+    if (loading) return <ChartSkeleton title="Histórico de acessos" wide />
+    if (!data || data.length === 0) return null
+
+    return (
+        <Card className="col-span-1 lg:col-span-2 flex flex-col">
+            <CardHeader className="pb-2">
+                <CardDescription className="flex items-center gap-1">
+                    <History className="size-4" /> Histórico recente (últimos 30 dias)
+                </CardDescription>
+                <CardTitle className="text-lg">Dispositivos e Hora de Acesso</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1">
+                <div className="overflow-hidden rounded-xl border border-border">
+                    <div className="grid grid-cols-[minmax(0,1.6fr)_110px_120px] gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        <span>Acesso</span>
+                        <span>Dispositivo</span>
+                        <span>Hora</span>
+                    </div>
+                    <div className="divide-y divide-border">
+                        {data.map((entry) => (
+                            <div
+                                key={entry.id_visualizacao}
+                                className="grid grid-cols-[minmax(0,1.6fr)_110px_120px] gap-3 px-4 py-3 text-sm"
+                            >
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 font-medium text-foreground">
+                                        {entry.tipo === "ponto" ? <MapPin className="size-4 shrink-0" /> : <Route className="size-4 shrink-0" />}
+                                        <span className="truncate">{entry.referencia_nome}</span>
+                                    </div>
+                                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                                        {entry.browser} · {entry.sistema_operativo}
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                    <DeviceIcon type={entry.dispositivo} className="size-4 shrink-0" />
+                                    <span className="capitalize">{DEVICE_LABELS[entry.dispositivo] || entry.dispositivo}</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                    <Clock3 className="size-4 shrink-0" />
+                                    <span>{formatAccessTime(entry.data_hora)}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
 /**
  * Skeleton de loading
  */
@@ -505,6 +571,10 @@ export default function DashboardCharts() {
                 <BrowserChart />
                 <SOChart />
                 <TopPontosChart />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <AccessHistoryCard />
             </div>
         </div>
     )

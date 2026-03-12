@@ -101,8 +101,20 @@ function resolveImagePayload(req) {
     return { imagePath };
 }
 
+function toAbsoluteRequestUrl(req, urlPath) {
+    if (!urlPath) return null;
+    if (/^https?:\/\//i.test(urlPath)) return urlPath;
+
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const protocol = (typeof forwardedProto === 'string' && forwardedProto) || req.protocol || 'http';
+    const host = req.get('host');
+
+    if (!host) return urlPath;
+    return `${protocol}://${host}${urlPath.startsWith('/') ? urlPath : `/${urlPath}`}`;
+}
+
 function serializePonto(ponto, options = {}) {
-    const { includeLegacyImage = true, visualizacoes = 0 } = options;
+    const { includeLegacyImage = true, visualizacoes = 0, request = null } = options;
     const raw = typeof ponto.toJSON === 'function' ? ponto.toJSON() : { ...ponto };
 
     let legacyBase64 = null;
@@ -116,7 +128,9 @@ function serializePonto(ponto, options = {}) {
     }
 
     const hasFileManagerImage = raw.imagePath && uploadFileExists(raw.imagePath);
-    const imageUrl = hasFileManagerImage ? getPublicUploadUrl(raw.imagePath) : null;
+    const imageUrl = hasFileManagerImage
+        ? toAbsoluteRequestUrl(request, getPublicUploadUrl(raw.imagePath))
+        : null;
 
     return {
         ...raw,
@@ -185,7 +199,7 @@ exports.createPonto = (req, res) => {
 
             return res.status(201).json({
                 message: 'Ponto criado com sucesso',
-                ponto: serializePonto(novoPontoComCategorias)
+                ponto: serializePonto(novoPontoComCategorias, { request: req })
             });
         } catch (error) {
             console.error("Erro no createPonto:", error);
@@ -236,6 +250,7 @@ exports.listPontos = async (req, res) => {
         const pontosComImagens = pontos.map((ponto) => serializePonto(ponto, {
             includeLegacyImage: false,
             visualizacoes: visualizacoesMap[String(ponto.id_ponto)] || 0,
+            request: req,
         }));
 
         return res.status(200).json({ pontos: pontosComImagens });
@@ -264,7 +279,7 @@ exports.getPontoById = async (req, res) => {
         }
 
         return res.json({
-            ponto: serializePonto(ponto)
+            ponto: serializePonto(ponto, { request: req })
         });
 
     } catch (error) {
@@ -337,7 +352,7 @@ exports.updatePonto = (req, res) => {
             const logMessage = `Ponto com ID ${id_ponto} foi atualizado`;
             logger.info(logMessage);
 
-            return res.status(200).json({ message: "Ponto atualizado com sucesso", ponto: serializePonto(pontoAtualizado) });
+            return res.status(200).json({ message: "Ponto atualizado com sucesso", ponto: serializePonto(pontoAtualizado, { request: req }) });
         } catch (error) {
             console.error("Erro ao atualizar ponto:", error);
             return res.status(500).json({ error: "Erro ao atualizar ponto" });

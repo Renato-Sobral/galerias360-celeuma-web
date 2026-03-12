@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from 'react';
-import Sidebar from '../../../components/sidebar';
 import ProtectedRoute from '../../../components/protectedRoute';
 import { getUserNameFromToken } from '../../../components/jwtDecode';
 import MultiCategoryPicker from '../../../components/MultiCategoryPicker';
@@ -121,12 +120,9 @@ export default function CreatePoint() {
 
     return (
         <ProtectedRoute rolesRequired={"Admin"}>
-            <div className="flex min-h-screen">
-                <div className="w-80 bg-gray-800 text-white">
-                    <Sidebar />
-                </div>
-                <div className="flex-1 flex justify-center items-center">
-                    <form onSubmit={handleSubmit} className="space-y-6 w-80">
+            <div className="min-h-screen bg-background text-foreground">
+                <div className="mx-auto flex min-h-screen w-full max-w-3xl items-start justify-center px-4 py-8 sm:px-6 lg:px-8">
+                    <form onSubmit={handleSubmit} className="w-full max-w-md space-y-6">
                         <div>
                             <label htmlFor="name" className="block text-sm font-medium text-gray-900">
                                 Name

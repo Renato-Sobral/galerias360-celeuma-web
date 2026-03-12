@@ -15,9 +15,8 @@ import { Switch } from "@/components/ui/switch";
 import TooltipWrapper from "../components/TooltipWrapper";
 import MediaSourceField from "../components/MediaSourceField";
 import Swal from "sweetalert2";
-import { Image, Layers, Loader2, LocateFixed, Pencil } from "lucide-react";
+import { Layers, Loader2, LocateFixed, Pencil } from "lucide-react";
 import { createLibrarySelection, resolveMediaSelection } from "../lib/media-library";
-import 'aframe';
 
 const MAP_VIEWS = {
     osm_hot: {
@@ -43,8 +42,8 @@ const MAP_VIEWS = {
 export default function MapComponent() {
     const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, latlng: null });
     const [formLateralOpen, setFormLateralOpen] = useState(false);
-    const [formLateralAssetsOpen, setFormLateralAssetsOpen] = useState(false);
     const [coordinates, setCoordinates] = useState(null);
+    const [editingPonto, setEditingPonto] = useState(null);
     const [pontos, setPontos] = useState([]);
     const [categorias, setCategorias] = useState([]);
     const [selectedCategoriaFilter, setSelectedCategoriaFilter] = useState("all");
@@ -57,9 +56,6 @@ export default function MapComponent() {
     const [mapViewMenuOpen, setMapViewMenuOpen] = useState(false);
     const [routesLoading, setRoutesLoading] = useState(false);
     const userRole = getUserRoleFromToken();
-    const [overlays, setOverlays] = useState([]);
-    const [overlayDone, setOverlayDone] = useState(false);
-    const overlayFetchStartedRef = useRef(false);
     const pendingRouteKeysRef = useRef(new Set());
     const mapViewMenuRef = useRef(null);
     const isAdmin = userRole === "Admin";
@@ -75,33 +71,6 @@ export default function MapComponent() {
         document.addEventListener("mousedown", handleOutsideClick);
         return () => document.removeEventListener("mousedown", handleOutsideClick);
     }, []);
-
-    /*IMAGE CONTROLS*/
-    const [panelOpenImg, setPanelOpenImg] = useState(false);
-    const [brightnessImg, setBrightnessImg] = useState(1);
-    const [contrastImg, setContrastImg] = useState(1);
-    const [saturationImg, setSaturationImg] = useState(1);
-    const [hueImg, setHueImg] = useState(0);
-
-    /*VIDEO CONTROLS*/
-    const [panelOpenVideo, setPanelOpenVideo] = useState(false);
-    const [brightnessVideo, setBrightnessVideo] = useState(1);
-    const [contrastVideo, setContrastVideo] = useState(1);
-    const [saturationVideo, setSaturationVideo] = useState(1);
-    const [hueVideo, setHueVideo] = useState(0);
-
-    /*3D MODEL CONTROLS*/
-    const [panelOpen, setPanelOpen] = useState(false);
-    const [position, setPosition] = useState({ x: 0, y: -10, z: -20 });
-    const [rotation, setRotation] = useState({ x: 0, y: 0, z: 0 });
-    const [scale, setScale] = useState({ x: 0.1, y: 0.1, z: 0.1 });
-    const [ambientIntensity, setAmbientIntensity] = useState(0.7);
-    const [directionalIntensity, setDirectionalIntensity] = useState(1);
-    const [directionalPosition, setDirectionalPosition] = useState({ x: 1, y: 2, z: 3 });
-    const [brightness, setBrightness] = useState(1);
-    const [contrast, setContrast] = useState(1);
-    const [saturation, setSaturation] = useState(1);
-    const [hue, setHue] = useState(0);
 
     useEffect(() => {
         if (!showRoutes) {
@@ -128,6 +97,7 @@ export default function MapComponent() {
             return;
         }
 
+        pendingRouteKeysRef.current = new Set(routeKeys);
         setRoutesLoading(true);
     }, [showRoutes, rotas, getRouteKey]);
 
@@ -216,7 +186,7 @@ export default function MapComponent() {
         e.originalEvent.preventDefault();
         setPontoMenu({ visible: true, x: e.containerPoint.x + 5, y: e.containerPoint.y + 5, ponto });
         setContextMenu({ visible: false, x: 0, y: 0, latlng: null });
-    }, []);
+    }, [isAdmin]);
 
     const addPontoToTrajeto = useCallback((ponto) => {
         if (!ponto) return;
@@ -240,7 +210,6 @@ export default function MapComponent() {
         if (!isAdmin || !ponto) return;
 
         addPontoToTrajeto(ponto);
-
         setPontoMenu({ visible: false, x: 0, y: 0, ponto: null });
     }, [addPontoToTrajeto, isAdmin]);
 
@@ -302,50 +271,26 @@ export default function MapComponent() {
         }
     }, [trajetoPontos, loadRotas]);
 
-    const copyToClipboard = useCallback(async (text) => {
-        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-
-        if (typeof document === "undefined") return false;
-
-        const textArea = document.createElement("textarea");
-        textArea.value = text;
-        textArea.setAttribute("readonly", "");
-        textArea.style.position = "fixed";
-        textArea.style.top = "-9999px";
-        textArea.style.left = "-9999px";
-        document.body.appendChild(textArea);
-        textArea.select();
-
-        let success = false;
-        try {
-            success = document.execCommand("copy");
-        } finally {
-            document.body.removeChild(textArea);
-        }
-
-        return success;
-    }, []);
-
-    const handleGetCoordinates = useCallback(async () => {
+    const handleCreatePoint = useCallback(() => {
         if (contextMenu.latlng) {
-            const value = `${contextMenu.latlng.lat}, ${contextMenu.latlng.lng}`;
-            const copied = await copyToClipboard(value);
+            setEditingPonto(null);
             setCoordinates(contextMenu.latlng);
-
-            if (!copied) {
-                Swal.fire({
-                    title: "Atenção",
-                    text: "Não foi possível copiar automaticamente as coordenadas neste browser.",
-                    icon: "warning",
-                    confirmButtonColor: "#171717",
-                });
-            }
+            setFormLateralOpen(true);
         }
-        setContextMenu({ visible: false });
-    }, [contextMenu, copyToClipboard]);
+        setContextMenu({ visible: false, x: 0, y: 0, latlng: null });
+    }, [contextMenu.latlng]);
+
+    const handleEditPoint = useCallback(() => {
+        if (!pontoMenu.ponto) return;
+
+        setEditingPonto(pontoMenu.ponto);
+        setCoordinates({
+            lat: pontoMenu.ponto.latitude,
+            lng: pontoMenu.ponto.longitude,
+        });
+        setFormLateralOpen(true);
+        setPontoMenu({ visible: false, x: 0, y: 0, ponto: null });
+    }, [pontoMenu.ponto]);
 
     function MapClickHandler() {
         const isAdmin = getUserRoleFromToken() === "Admin";
@@ -382,10 +327,10 @@ export default function MapComponent() {
             style={{ top: contextMenu.y, left: contextMenu.x, zIndex: 1000 }}
         >
             <div
-                onClick={handleGetCoordinates}
+                onClick={handleCreatePoint}
                 className="px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 cursor-pointer rounded"
             >
-                Obter coordenadas
+                Criar ponto
             </div>
         </div>
     );
@@ -396,6 +341,12 @@ export default function MapComponent() {
             style={{ top: pontoMenu.y, left: pontoMenu.x, zIndex: 1000 }}
         >
             <div
+                onClick={handleEditPoint}
+                className="px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 cursor-pointer rounded"
+            >
+                Editar ponto
+            </div>
+            <div
                 onClick={handleTrajetoSelection}
                 className="px-4 py-2 text-sm text-gray-800 hover:bg-gray-100 cursor-pointer rounded"
             >
@@ -404,530 +355,8 @@ export default function MapComponent() {
         </div>
     );
 
-    async function fetchOverlayPreferencial(idPreferencial = 1) {
-        try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/overlay/list`);
-            if (!response.ok) {
-                throw new Error(`Erro ao buscar overlay: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            const overlays = Array.isArray(data?.overlays) ? data.overlays : [];
-
-            if (!overlays.length) return null;
-
-            const overlayPreferencial = overlays.find((overlay) => {
-                const overlayId = overlay?.id ?? overlay?.id_overlay;
-                return Number(overlayId) === Number(idPreferencial);
-            });
-
-            return overlayPreferencial ?? overlays[0];
-        } catch (error) {
-            console.warn("Erro ao buscar overlay:", error);
-            return null;
-        }
-    }
-
-    useEffect(() => {
-        if (overlayFetchStartedRef.current) return;
-        overlayFetchStartedRef.current = true;
-
-        if (!overlayDone) {
-            async function loadOverlay() {
-                const overlay = await fetchOverlayPreferencial(1);
-                if (overlay) {
-                    console.log("Overlay carregado:", overlay);
-                    setOverlays([overlay]);
-                }
-
-                // Mesmo que não exista overlay, evitar repetir fetch/erros
-                setOverlayDone(true);
-            }
-            loadOverlay();
-        }
-    }, []);
-
     return (
         <div className="fixed top-0 h-screen w-screen">
-            {overlays.length > 0 && (
-                <div
-                    style={{
-                        position: "absolute",
-                        bottom: 10,
-                        left: 10,
-                        zIndex: 2000,
-                        background: "rgba(0,0,0,0.5)",
-                        padding: 8,
-                        borderRadius: 8,
-                    }}
-                >
-                    {overlays.map((overlay) => {
-                        if (!overlay.conteudo) return null;
-
-                        // Se for imagem
-                        if (overlay.tipo === "imagem") {
-                            return (
-                                <div key={overlay.id}>
-                                    <div style={{ "position": "relative" }}>
-                                        <img
-                                            src={`data:image/jpg;base64,${overlay.conteudo}`}
-                                            alt="overlay"
-                                            style={{
-                                                maxWidth: "25vw",
-                                                aspectRatio: "16:9",
-                                                filter: `
-                                                    brightness(${brightnessImg})
-                                                    contrast(${contrastImg})
-                                                    saturate(${saturationImg})
-                                                    hue-rotate(${hueImg}deg)
-                                                `,
-                                                transition: "filter 0.3s ease-in-out"
-                                            }}
-                                        />
-                                        {isAdmin && (
-                                            <button
-                                                onClick={() => setPanelOpenImg(true)}
-                                                style={{
-                                                    position: "absolute",
-                                                    bottom: 10,
-                                                    right: 10,
-                                                    zIndex: 1000,
-                                                    background: "rgba(0,0,0,0.7)",
-                                                    color: "#fff",
-                                                    border: "none",
-                                                    borderRadius: 8,
-                                                    padding: "8px 12px",
-                                                    cursor: "pointer",
-                                                }}
-                                            >
-                                                <Image className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                    {/* PAINEL DE IMAGEM */}
-                                    {panelOpenImg && isAdmin && (
-                                        <div className="fixed top-1/2 -translate-y-1/2 bg-white shadow-xl rounded-xl right-4 w-[90vw] sm:w-[25%] h-[60%] overflow-y-auto z-50">
-                                            <button onClick={() => setPanelOpenImg(false)} className="absolute text-black top-4 right-4">✕</button>
-                                            <div className="p-6 space-y-4">
-                                                <h2 className="text-lg text-black font-semibold mb-2">VFX - Imagem</h2>
-
-                                                <label className="text-black">Brilho:</label>
-                                                <input
-                                                    type="range" min="0" max="2" step="0.05"
-                                                    value={brightnessImg} onChange={(e) => setBrightnessImg(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Contraste:</label>
-                                                <input
-                                                    type="range" min="0" max="2" step="0.05"
-                                                    value={contrastImg} onChange={(e) => setContrastImg(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Saturação:</label>
-                                                <input
-                                                    type="range" min="0" max="3" step="0.05"
-                                                    value={saturationImg} onChange={(e) => setSaturationImg(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Matiz (Hue):</label>
-                                                <input
-                                                    type="range" min="0" max="360" step="1"
-                                                    value={hueImg} onChange={(e) => setHueImg(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }
-
-                        // Se for vídeo
-                        if (overlay.tipo === "video") {
-                            return (
-                                <div key={overlay.id}>
-                                    <div style={{ position: "relative" }}>
-                                        <video
-                                            src={`data:video/mp4;base64,${overlay.conteudo}`}
-                                            autoPlay
-                                            loop
-                                            muted
-                                            style={{
-                                                maxWidth: "25vw",
-                                                aspectRatio: "16:9",
-                                                filter: `
-                                                    brightness(${brightnessVideo})
-                                                    contrast(${contrastVideo})
-                                                    saturate(${saturationVideo})
-                                                    hue-rotate(${hueVideo}deg)
-                                                `,
-                                                transition: "filter 0.3s ease-in-out"
-                                            }}
-                                        />
-                                        {isAdmin && (
-                                            <button
-                                                onClick={() => setPanelOpenVideo(true)}
-                                                style={{
-                                                    position: "absolute",
-                                                    bottom: 10,
-                                                    right: 10,
-                                                    zIndex: 1000,
-                                                    background: "rgba(0,0,0,0.7)",
-                                                    color: "#fff",
-                                                    border: "none",
-                                                    borderRadius: 8,
-                                                    padding: "8px 12px",
-                                                    cursor: "pointer",
-                                                }}
-                                            >
-                                                <Image className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                    {panelOpenVideo && isAdmin && (
-                                        <div className="fixed top-1/2 -translate-y-1/2 bg-white shadow-xl rounded-xl right-4 w-[90vw] sm:w-[25%] h-[60%] overflow-y-auto z-50">
-                                            <button onClick={() => setPanelOpenVideo(false)} className="absolute text-black top-4 right-4">✕</button>
-                                            <div className="p-6 space-y-4">
-                                                <h2 className="text-lg text-black font-semibold mb-2">VFX - Vídeo</h2>
-
-                                                <label className="text-black">Brilho:</label>
-                                                <input
-                                                    type="range" min="0" max="2" step="0.05"
-                                                    value={brightnessVideo} onChange={(e) => setBrightnessVideo(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Contraste:</label>
-                                                <input
-                                                    type="range" min="0" max="2" step="0.05"
-                                                    value={contrastVideo} onChange={(e) => setContrastVideo(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Saturação:</label>
-                                                <input
-                                                    type="range" min="0" max="3" step="0.05"
-                                                    value={saturationVideo} onChange={(e) => setSaturationVideo(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Matiz (Hue):</label>
-                                                <input
-                                                    type="range" min="0" max="360" step="1"
-                                                    value={hueVideo} onChange={(e) => setHueVideo(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }
-
-                        // Se for modelo 3D (GLB)
-                        if (overlay.tipo === "modelo3d") {
-                            // Para GLB base64, A-Frame precisa criar Blob URL
-                            const blob = new Blob(
-                                [Uint8Array.from(atob(overlay.conteudo), c => c.charCodeAt(0))],
-                                { type: "model/gltf-binary" } // ou 'model/gltf-binary' mesmo
-                            );
-                            const url = URL.createObjectURL(blob);
-                            return (
-                                <div key={overlay.id}>
-                                    <div
-                                        className="mapModel"
-                                        style={{
-                                            position: "absolute",
-                                            bottom: 10,
-                                            left: 10,
-                                            width: "25vw",  // define largura visível
-                                            height: "25vw", // define altura visível
-                                            zIndex: 1000,
-                                            filter: `
-                                                brightness(${brightness})
-                                                contrast(${contrast})
-                                                saturate(${saturation})
-                                                hue-rotate(${hue}deg)
-                                            `,
-                                            transition: "filter 0.3s ease-in-out"
-                                        }}
-                                    >
-                                        <a-scene embedded style={{ width: "100%", height: "100%" }}>
-                                            <a-entity
-                                                gltf-model={url}
-                                                position={`${position.x} ${position.y} ${position.z}`}
-                                                rotation={`${rotation.x} ${rotation.y} ${rotation.z}`}
-                                                scale={`${scale.x} ${scale.y} ${scale.z}`}
-                                                look-at="[camera]"
-                                                ref={(el) => {
-                                                    if (el && el.object3D) {
-                                                        // calcula bounding box do modelo
-                                                        const bbox = new THREE.Box3().setFromObject(el.object3D);
-                                                        const center = bbox.getCenter(new THREE.Vector3());
-
-                                                        // subtrai o centro para centralizar o modelo
-                                                        el.object3D.position.sub(center);
-                                                    }
-                                                }}
-                                            ></a-entity>
-
-                                            <a-light type="ambient" color="#ffffff" intensity={ambientIntensity} />
-                                            <a-light
-                                                type="directional"
-                                                color="#ffffff"
-                                                intensity={directionalIntensity}
-                                                position={`${directionalPosition.x} ${directionalPosition.y} ${directionalPosition.z}`}
-                                            />
-
-                                            <a-entity camera look-controls position="0 0 3"></a-entity>
-                                        </a-scene>
-                                        {isAdmin && (
-                                            <button
-                                                onClick={() => setPanelOpen(true)}
-                                                style={{
-                                                    position: "absolute",
-                                                    bottom: 10,
-                                                    right: 10,
-                                                    zIndex: 1000,
-                                                    background: "rgba(0,0,0,0.7)",
-                                                    color: "#fff",
-                                                    border: "none",
-                                                    borderRadius: 8,
-                                                    padding: "8px 12px",
-                                                    cursor: "pointer",
-                                                }}
-                                            >
-                                                <Image className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                    {panelOpen && isAdmin && (
-                                        <div
-                                            className={`
-                                            fixed top-1/2 -translate-y-1/2
-                                            bg-white shadow-xl rounded-xl
-                                            transition-all duration-300 ease-in-out transform
-                                            right-4 w-[90vw] sm:w-[25%] h-[60%] overflow-y-auto
-                                            z-50
-                                        `}
-                                        >
-                                            <button
-                                                onClick={() => setPanelOpen(false)}
-                                                className="absolute top-4 right-4 text-gray-700 hover:text-black"
-                                            >
-                                                ✕
-                                            </button>
-
-                                            <div className="p-6 space-y-4">
-                                                <h2 className="text-lg font-semibold text-black mb-2">Editar Modelo e Luzes</h2>
-
-                                                <h3 className="text-black font-semibold">Modelo 3D</h3>
-
-                                                <label className="text-black">Posição X:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={position.x}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setPosition({ ...position, x: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Posição Y:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={position.y}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setPosition({ ...position, y: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Posição Z:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={position.z}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setPosition({ ...position, z: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Rotação X:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="360"
-                                                    step="1"
-                                                    value={rotation.x}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setRotation({ ...rotation, x: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Rotação Y:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="360"
-                                                    step="1"
-                                                    value={rotation.y}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setRotation({ ...rotation, y: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Rotação Z:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="360"
-                                                    step="1"
-                                                    value={rotation.z}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setRotation({ ...rotation, z: parseFloat(e.target.value) })}
-                                                />
-
-                                                <label className="text-black">Escala:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0.1"
-                                                    max="5"
-                                                    step="0.1"
-                                                    value={scale.x}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) =>
-                                                        setScale({
-                                                            x: parseFloat(e.target.value),
-                                                            y: parseFloat(e.target.value),
-                                                            z: parseFloat(e.target.value),
-                                                        })
-                                                    }
-                                                />
-
-                                                <h3 className="text-black font-semibold mt-4">Luzes</h3>
-
-                                                <label className="text-black">Intensidade Ambient:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="5"
-                                                    step="0.1"
-                                                    value={ambientIntensity}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setAmbientIntensity(parseFloat(e.target.value))}
-                                                />
-
-                                                <label className="text-black">Intensidade Direcional:</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="5"
-                                                    step="0.1"
-                                                    value={directionalIntensity}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) => setDirectionalIntensity(parseFloat(e.target.value))}
-                                                />
-
-                                                <label className="text-black">Posição Direcional X:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={directionalPosition.x}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) =>
-                                                        setDirectionalPosition({ ...directionalPosition, x: parseFloat(e.target.value) })
-                                                    }
-                                                />
-
-                                                <label className="text-black">Posição Direcional Y:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={directionalPosition.y}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) =>
-                                                        setDirectionalPosition({ ...directionalPosition, y: parseFloat(e.target.value) })
-                                                    }
-                                                />
-
-                                                <label className="text-black">Posição Direcional Z:</label>
-                                                <input
-                                                    type="range"
-                                                    min="-20"
-                                                    max="20"
-                                                    step="0.1"
-                                                    value={directionalPosition.z}
-                                                    className="w-full accent-black"
-                                                    onChange={(e) =>
-                                                        setDirectionalPosition({ ...directionalPosition, z: parseFloat(e.target.value) })
-                                                    }
-                                                />
-
-                                                <h3 className="text-black font-semibold">Efeitos Visuais (VFX)</h3>
-
-                                                <label className="text-black">Brilho (Brightness):</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="2"
-                                                    step="0.05"
-                                                    value={brightness}
-                                                    onChange={(e) => setBrightness(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Contraste (Contrast):</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="2"
-                                                    step="0.05"
-                                                    value={contrast}
-                                                    onChange={(e) => setContrast(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Saturação (Saturation):</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="3"
-                                                    step="0.05"
-                                                    value={saturation}
-                                                    onChange={(e) => setSaturation(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-
-                                                <label className="text-black">Matiz (Hue):</label>
-                                                <input
-                                                    type="range"
-                                                    min="0"
-                                                    max="360"
-                                                    step="1"
-                                                    value={hue}
-                                                    onChange={(e) => setHue(parseFloat(e.target.value))}
-                                                    className="w-full accent-black"
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }
-
-                        return null;
-                    })}
-                </div>
-            )}
             <MapContainer center={[40.659773, -7.910792]} zoom={15} zoomControl={false} className="h-full w-full" doubleClickZoom={false}>
                 <TileLayer
                     key={mapView}
@@ -987,14 +416,18 @@ export default function MapComponent() {
                     />
                 )}
                 <MapControls />
-                <MapFunctions openFormLateral={() => setFormLateralOpen(true)} openFormLateralAssets={() => setFormLateralAssetsOpen(true)} isAdmin={isAdmin} />
+                <MapFunctions openFormLateral={() => setFormLateralOpen(true)} isAdmin={isAdmin} />
                 <FormLateral
                     isOpen={formLateralOpen}
-                    onClose={() => setFormLateralOpen(false)}
+                    onClose={() => {
+                        setFormLateralOpen(false);
+                        setEditingPonto(null);
+                    }}
                     coordinates={coordinates}
                     categorias={categorias}
+                    existingPonto={editingPonto}
+                    onSaved={loadPontos}
                 />
-                <FormLateralAssets isOpen={formLateralAssetsOpen} onClose={() => setFormLateralAssetsOpen(false)} existingOverlay={overlays.length > 0 ? overlays[0] : null} />
                 <div className="absolute top-5 left-5 z-[1000] flex flex-wrap gap-2 sm:gap-3 items-center max-w-[calc(100vw-40px)]">
                     <SearchBar />
                     <div ref={mapViewMenuRef} className="relative flex items-center shrink-0">
@@ -1258,7 +691,9 @@ function SearchBar() {
     );
 }
 
-function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
+function FormLateral({ isOpen, onClose, coordinates, categorias = [], existingPonto = null, onSaved }) {
+    useMapInteractionLock(isOpen);
+
     const username = getUserNameFromToken();
     const [lat, setLat] = useState("");
     const [lng, setLng] = useState("");
@@ -1280,6 +715,30 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
         }
     }, [coordinates]);
 
+    useEffect(() => {
+        if (!existingPonto) {
+            setName("");
+            setDescription("");
+            setIdCategorias([]);
+            setImageSelection(null);
+            setError("");
+            return;
+        }
+
+        const categoriasDoPonto =
+            existingPonto?.categorias ||
+            (existingPonto?.CategoriaPonto ? [existingPonto.CategoriaPonto] : []) ||
+            (existingPonto?.categoria ? [existingPonto.categoria] : []);
+
+        setName(existingPonto.name || "");
+        setDescription(existingPonto.description || "");
+        setLat(existingPonto.latitude?.toString() || "");
+        setLng(existingPonto.longitude?.toString() || "");
+        setIdCategorias((categoriasDoPonto || []).map((categoria) => String(categoria.id_categoria)));
+        setImageSelection(createLibrarySelection(existingPonto.imagePath));
+        setError("");
+    }, [existingPonto]);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -1289,11 +748,11 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
         }
 
         const result = await Swal.fire({
-            title: "Confirmar criação",
-            text: "Tens a certeza que queres criar este ponto?",
+            title: existingPonto ? "Confirmar atualização" : "Confirmar criação",
+            text: existingPonto ? "Tens a certeza que queres atualizar este ponto?" : "Tens a certeza que queres criar este ponto?",
             icon: "question",
             showCancelButton: true,
-            confirmButtonText: "Sim, criar",
+            confirmButtonText: existingPonto ? "Sim, atualizar" : "Sim, criar",
             cancelButtonText: "Cancelar",
             confirmButtonColor: "#171717",
             cancelButtonColor: "#6b7280",
@@ -1312,24 +771,25 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
         formData.append("username", username);
 
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ponto/create`, {
-                method: "POST",
+            const response = await fetch(existingPonto ? `${process.env.NEXT_PUBLIC_API_URL}/ponto/update/${existingPonto.id_ponto}` : `${process.env.NEXT_PUBLIC_API_URL}/ponto/create`, {
+                method: existingPonto ? "PATCH" : "POST",
                 body: formData,
             });
 
             if (!response.ok) {
                 const data = await response.json();
-                setError(data.error || "Erro ao criar ponto.");
+                setError(data.error || (existingPonto ? "Erro ao atualizar ponto." : "Erro ao criar ponto."));
             } else {
                 setError("");
                 setName("");
                 setDescription("");
                 setIdCategorias([]);
                 setImageSelection(null);
+                onSaved?.();
                 onClose();
                 Swal.fire({
-                    title: "Criado!",
-                    text: "Ponto criado com sucesso.",
+                    title: existingPonto ? "Atualizado!" : "Criado!",
+                    text: existingPonto ? "Ponto atualizado com sucesso." : "Ponto criado com sucesso.",
                     icon: "success",
                     confirmButtonColor: "#171717",
                 });
@@ -1371,17 +831,25 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
     fixed top-1/2 -translate-y-1/2
     bg-white shadow-xl rounded-xl
     transition-all duration-300 ease-in-out transform
-    ${isOpen ? "opacity-95 right-4 sm:right-[88px]" : "opacity-0 right-[-400px]"}
-    w-[90vw] sm:w-[25%]
+    ${isOpen ? "opacity-95 right-4 sm:right-24 lg:right-28" : "opacity-0 right-[-400px]"}
+    w-[90vw] sm:w-[32rem] lg:w-[36rem] sm:max-w-[calc(100vw-8rem)]
     h-[70%]
     cursor-pointer
     overflow-hidden sm:overflow-visible
   `}
-            style={{ zIndex: 1000, pointerEvents: isOpen ? "auto" : "none" }}
-            onMouseMove={(e) => {
-                e.stopPropagation();
-                e.nativeEvent.stopImmediatePropagation();
+            style={{
+                zIndex: 1000,
+                pointerEvents: isOpen ? "auto" : "none",
+                touchAction: "pan-y",
+                overscrollBehavior: "contain",
             }}
+            onMouseMove={(e) => {
+                stopMapEventPropagation(e);
+            }}
+            onWheel={stopMapEventPropagation}
+            onTouchStart={stopMapEventPropagation}
+            onTouchMove={stopMapEventPropagation}
+            onPointerDown={stopMapEventPropagation}
         >
             <button
                 onClick={onClose}
@@ -1390,10 +858,16 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
                 ✕
             </button>
 
-            <div className="p-8 overflow-y-auto max-h-full">
-                <h2 className="text-lg font-semibold mb-4">Adicionar Ponto</h2>
-                <form className="space-y-4" onSubmit={handleSubmit}>
-                    <div>
+            <div
+                className="p-8 overflow-y-auto max-h-full"
+                style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}
+                onWheel={stopMapEventPropagation}
+                onTouchStart={stopMapEventPropagation}
+                onTouchMove={stopMapEventPropagation}
+            >
+                <h2 className="text-lg font-semibold mb-4">{existingPonto ? "Editar Ponto" : "Adicionar Ponto"}</h2>
+                <form className="grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={handleSubmit}>
+                    <div className="sm:col-span-2">
                         <label className="block text-sm font-medium text-gray-700">Nome</label>
                         <input
                             type="text"
@@ -1403,7 +877,7 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
                             onChange={(e) => setName(e.target.value)}
                         />
                     </div>
-                    <div>
+                    <div className="sm:col-span-2">
                         <label className="block text-sm font-medium text-gray-700">Descrição</label>
                         <textarea
                             className="w-full px-3 py-2 border rounded-lg"
@@ -1450,12 +924,12 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
                             required
                         />
                     </div>
-                    {error && <div className="text-red-600 text-sm">{error}</div>}
+                    {error && <div className="text-red-600 text-sm sm:col-span-2">{error}</div>}
                     <button
                         type="submit"
-                        className="w-full bg-black text-white py-2 rounded-lg hover:opacity-95"
+                        className="w-full bg-black text-white py-2 rounded-lg hover:opacity-95 sm:col-span-2"
                     >
-                        Adicionar
+                        {existingPonto ? "Guardar alterações" : "Adicionar"}
                     </button>
                 </form>
             </div>
@@ -1463,152 +937,57 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [] }) {
     );
 }
 
-function FormLateralAssets({ isOpen, onClose, existingOverlay }) {
-    const username = getUserNameFromToken();
-    const [tipo, setTipo] = useState(existingOverlay?.tipo || "");
-    const [mediaSelection, setMediaSelection] = useState(null);
-    const [error, setError] = useState("");
+function stopMapEventPropagation(event) {
+    event.stopPropagation();
+    event.nativeEvent?.stopImmediatePropagation?.();
+}
+
+function useMapInteractionLock(active) {
+    const map = useMap();
+    const interactionStateRef = useRef(null);
 
     useEffect(() => {
-        if (existingOverlay) {
-            setTipo(existingOverlay.tipo);
-            setMediaSelection(createLibrarySelection(existingOverlay.mediaPath));
-        } else {
-            setTipo("");
-            setMediaSelection(null);
-        }
-    }, [existingOverlay]);
+        if (!map) return;
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (!tipo && !existingOverlay) {
-            setError("Seleciona um tipo.");
-            return;
-        }
+        const interactions = [
+            ["dragging", map.dragging],
+            ["touchZoom", map.touchZoom],
+            ["scrollWheelZoom", map.scrollWheelZoom],
+            ["doubleClickZoom", map.doubleClickZoom],
+            ["boxZoom", map.boxZoom],
+            ["keyboard", map.keyboard],
+            ["tap", map.tap],
+        ];
 
-        if (!mediaSelection && !existingOverlay) {
-            setError("Carrega um ficheiro.");
-            return;
-        }
+        const restoreInteractions = () => {
+            if (!interactionStateRef.current) return;
 
-        const result = await Swal.fire({
-            title: existingOverlay ? "Confirmar atualização" : "Confirmar criação",
-            text: existingOverlay
-                ? "Tens a certeza que queres atualizar este asset?"
-                : "Tens a certeza que queres criar este asset?",
-            icon: "question",
-            showCancelButton: true,
-            confirmButtonText: existingOverlay ? "Atualizar" : "Criar",
-            cancelButtonText: "Cancelar",
-            confirmButtonColor: "#171717",
-            cancelButtonColor: "#6b7280",
-        });
-        if (!result.isConfirmed) return;
-
-        const resolvedMedia = await resolveMediaSelection(mediaSelection, "overlays");
-        const formData = new FormData();
-        formData.append("tipo", tipo);
-        formData.append("mediaPath", resolvedMedia?.path || "");
-        formData.append("username", username);
-
-        try {
-            const url = existingOverlay
-                ? `${process.env.NEXT_PUBLIC_API_URL}/overlay/update/${existingOverlay.id}`
-                : `${process.env.NEXT_PUBLIC_API_URL}/overlay/create`;
-
-            const method = existingOverlay ? "PATCH" : "POST";
-
-            const response = await fetch(url, {
-                method,
-                body: formData,
+            interactions.forEach(([name, handler]) => {
+                const wasEnabled = interactionStateRef.current[name];
+                if (wasEnabled) {
+                    handler?.enable?.();
+                }
             });
 
-            if (!response.ok) {
-                const data = await response.json();
-                setError(data.error || "Erro ao processar o asset.");
-            } else {
-                setError("");
-                setTipo("");
-                setMediaSelection(null);
-                onClose();
-                Swal.fire({
-                    title: existingOverlay ? "Atualizado!" : "Criado!",
-                    text: existingOverlay
-                        ? "Asset atualizado com sucesso."
-                        : "Asset criado com sucesso.",
-                    icon: "success",
-                    confirmButtonColor: "#171717",
-                });
+            interactionStateRef.current = null;
+        };
+
+        if (active) {
+            if (!interactionStateRef.current) {
+                interactionStateRef.current = Object.fromEntries(
+                    interactions.map(([name, handler]) => [name, handler?.enabled?.() ?? false])
+                );
             }
-        } catch (err) {
-            setError("Erro ao enviar o formulário.");
+
+            interactions.forEach(([, handler]) => {
+                handler?.disable?.();
+            });
+        } else {
+            restoreInteractions();
         }
-    };
 
-    return (
-        <div
-            className={`fixed top-1/2 -translate-y-1/2 bg-white shadow-xl rounded-xl
-        transition-all duration-300 ease-in-out transform
-        ${isOpen ? "opacity-95 right-4 sm:right-[88px]" : "opacity-0 right-[-400px]"}
-        w-[90vw] sm:w-[25%] h-[50%] cursor-pointer overflow-hidden sm:overflow-visible`}
-            style={{ zIndex: 1000, pointerEvents: isOpen ? "auto" : "none" }}
-            onMouseMove={(e) => {
-                e.stopPropagation();
-                e.nativeEvent.stopImmediatePropagation();
-            }}
-        >
-            <button
-                onClick={onClose}
-                className="absolute top-4 right-4 text-gray-700 hover:text-black"
-            >
-                ✕
-            </button>
-
-            <div className="p-8 overflow-y-auto max-h-full">
-                <h2 className="text-lg font-semibold mb-4">
-                    {existingOverlay ? "Atualizar Asset" : "Adicionar Asset"}
-                </h2>
-                <form className="space-y-4" onSubmit={handleSubmit}>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Tipo</label>
-                        <select
-                            value={tipo}
-                            onChange={(e) => setTipo(e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg"
-                        >
-                            <option value="">Seleciona o tipo</option>
-                            <option value="imagem">Imagem</option>
-                            <option value="video">Vídeo</option>
-                            <option value="modelo3d">Modelo 3D</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <MediaSourceField
-                            label="Carregar Ficheiro"
-                            accept="image/*,video/*,.glb,.ply,.splat"
-                            selection={mediaSelection}
-                            onChange={setMediaSelection}
-                            destinationPath="overlays"
-                            required={!existingOverlay}
-                        />
-                        {existingOverlay && !mediaSelection && (
-                            <span className="mt-2 block text-sm text-gray-600">Arquivo atual será mantido.</span>
-                        )}
-                    </div>
-
-                    {error && <div className="text-red-600 text-sm">{error}</div>}
-
-                    <button
-                        type="submit"
-                        className="w-full bg-black text-white py-2 rounded-lg hover:opacity-95"
-                    >
-                        {existingOverlay ? "Atualizar" : "Adicionar"}
-                    </button>
-                </form>
-            </div>
-        </div>
-    );
+        return restoreInteractions;
+    }, [active, map]);
 }
 
 function MapControls() {
@@ -1759,18 +1138,13 @@ function MapControls() {
     );
 }
 
-function MapFunctions({ openFormLateral, openFormLateralAssets, isAdmin }) {
+function MapFunctions({ openFormLateral, isAdmin }) {
     if (!isAdmin) return null;
     return (
         <div
             className="fixed bottom-5 right-4 z-[1100] flex flex-col gap-2 rounded-lg bg-white/90 p-2 shadow-lg dark:bg-black/90 sm:right-5"
             style={{ cursor: "pointer", display: "flex", pointerEvents: "auto" }}
         >
-            <TooltipWrapper content="Adicionar Assets" sideOffset={12}>
-                <button type="button" onClick={openFormLateralAssets} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
-                    <Image className="w-4 h-4" />
-                </button>
-            </TooltipWrapper>
             <TooltipWrapper content="Adicionar Ponto" sideOffset={12}>
                 <button type="button" onClick={openFormLateral} className="p-2 bg-black bg-opacity-10 hover:bg-opacity-10 rounded-md dark:bg-black">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-map-pin-plus"><path d="M19.914 11.105A7.298 7.298 0 0 0 20 10a8 8 0 0 0-16 0c0 4.993 5.539 10.193 7.399 11.799a1 1 0 0 0 1.202 0 32 32 0 0 0 .824-.738" /><circle cx="12" cy="10" r="3" /><path d="M16 18h6" /><path d="M19 15v6" /></svg>

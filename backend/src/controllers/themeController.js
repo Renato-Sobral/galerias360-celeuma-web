@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const logger = require('../models/logger');
 const { getPublicUploadUrl, normalizeUploadsRelativePath } = require('../utils/mediaLibrary');
+const { getDefaultThemePreset } = require('../services/themePresetDefaults');
 
 /* ── multer: logos go to uploads/logos ── */
 const logosDir = path.join(__dirname, '..', '..', 'uploads', 'logos');
@@ -212,9 +213,14 @@ exports.getActiveTheme = async (req, res) => {
     try {
         const setting = await AppSetting.findByPk('active_theme_preset_id');
         if (!setting || !setting.value) {
-            return res.json({ success: true, data: null }); // use defaults
+            const defaultPreset = await getDefaultThemePreset();
+            return res.json({ success: true, data: serializePreset(defaultPreset, req) });
         }
         const preset = await ThemePreset.findByPk(setting.value);
+        if (!preset) {
+            const defaultPreset = await getDefaultThemePreset();
+            return res.json({ success: true, data: serializePreset(defaultPreset, req) });
+        }
         return res.json({ success: true, data: serializePreset(preset, req) });
     } catch (err) {
         console.error('Erro ao obter tema ativo:', err);

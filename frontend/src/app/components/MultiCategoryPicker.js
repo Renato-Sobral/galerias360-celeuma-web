@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Plus, Search } from "lucide-react";
 
 export default function MultiCategoryPicker({
     categorias = [],
@@ -10,11 +11,10 @@ export default function MultiCategoryPicker({
     emptyLabel = "Sem categorias disponíveis",
     allowCreate = false,
     createPlaceholder = "Nova categoria...",
-    createButtonLabel = "Adicionar categoria",
+    createButtonLabel = "+",
     onCreateCategory,
 }) {
     const [query, setQuery] = useState("");
-    const [newCategoryName, setNewCategoryName] = useState("");
     const [isCreating, setIsCreating] = useState(false);
     const [createError, setCreateError] = useState("");
     const [createdCategorias, setCreatedCategorias] = useState([]);
@@ -43,6 +43,11 @@ export default function MultiCategoryPicker({
     }, [categoriasDisponiveis, query]);
 
     const selectedSet = useMemo(() => new Set(selectedIds.map(String)), [selectedIds]);
+    const trimmedQuery = query.trim();
+    const normalizedQuery = trimmedQuery.toLowerCase();
+    const canCreateFromQuery = allowCreate && !!normalizedQuery && !categoriasDisponiveis.some(
+        (categoria) => String(categoria.name || "").trim().toLowerCase() === normalizedQuery
+    );
 
     const toggleCategoria = (id) => {
         const asString = String(id);
@@ -58,7 +63,7 @@ export default function MultiCategoryPicker({
     };
 
     const handleCreateCategory = async () => {
-        const trimmedName = newCategoryName.trim();
+        const trimmedName = trimmedQuery;
         if (!trimmedName || !onCreateCategory || isCreating) return;
 
         setIsCreating(true);
@@ -75,7 +80,7 @@ export default function MultiCategoryPicker({
                 if (exists) return prev;
                 return [categoriaCriada, ...prev];
             });
-            setNewCategoryName("");
+            setQuery("");
 
             const createdId = String(categoriaCriada.id_categoria);
             if (!selectedSet.has(createdId)) {
@@ -90,37 +95,35 @@ export default function MultiCategoryPicker({
 
     return (
         <div className="space-y-2">
-            <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={placeholder}
-                className="w-full bg-background border border-border text-foreground px-3 py-2 rounded text-sm"
-            />
+            <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter" && canCreateFromQuery) {
+                            e.preventDefault();
+                            handleCreateCategory();
+                        }
+                    }}
+                    placeholder={allowCreate ? `${placeholder} / ${createPlaceholder}` : placeholder}
+                    className="w-full rounded border border-border bg-background py-2 pl-9 pr-11 text-sm text-foreground"
+                />
+                {allowCreate && canCreateFromQuery && (
+                    <button
+                        type="button"
+                        onClick={handleCreateCategory}
+                        disabled={isCreating}
+                        className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-50"
+                        title={isCreating ? "A criar categoria" : `Criar categoria: ${trimmedQuery}`}
+                    >
+                        {isCreating ? createButtonLabel : <Plus className="h-4 w-4" />}
+                    </button>
+                )}
+            </div>
 
-            {allowCreate && (
-                <div className="space-y-2 rounded-md border border-border bg-muted/20 p-2">
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={newCategoryName}
-                            onChange={(e) => setNewCategoryName(e.target.value)}
-                            placeholder={createPlaceholder}
-                            className="w-full bg-background border border-border text-foreground px-3 py-2 rounded text-sm"
-                        />
-                        <button
-                            type="button"
-                            onClick={handleCreateCategory}
-                            disabled={isCreating || !newCategoryName.trim()}
-                            className="shrink-0 rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                            {isCreating ? "A criar..." : createButtonLabel}
-                        </button>
-                    </div>
-
-                    {createError && <p className="text-xs text-red-600">{createError}</p>}
-                </div>
-            )}
+            {createError && <p className="text-xs text-red-600">{createError}</p>}
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">

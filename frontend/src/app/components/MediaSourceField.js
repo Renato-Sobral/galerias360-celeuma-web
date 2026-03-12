@@ -387,7 +387,7 @@ export default function MediaSourceField({
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent
-          className="z-[120] flex h-[90vh] w-[90vw] max-w-[90vw] flex-col gap-0 overflow-hidden p-0 sm:rounded-xl"
+          className="z-[120] flex h-[90vh] w-[96vw] !max-w-[96vw] flex-col gap-0 overflow-hidden p-0 sm:h-[92vh] sm:w-[94vw] sm:!max-w-6xl xl:!max-w-7xl sm:rounded-xl"
           overlayClassName="z-[110] bg-transparent"
         >
           <DialogHeader>

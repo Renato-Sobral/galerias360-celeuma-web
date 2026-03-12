@@ -24,6 +24,7 @@ Authorization: Bearer <token>
 - [Convites](#convites)
 - [Map Overlays](#map-overlays)
 - [Temas / Personalização](#temas--personalização)
+- [Biblioteca de Media](#biblioteca-de-media)
 - [Ficheiros Estáticos](#ficheiros-estáticos)
 - [WebSocket (Socket.IO)](#websocket-socketio)
 
@@ -37,7 +38,8 @@ Base path: `/auth`
 |--------|----------------|----------------------------------------|------|
 | POST   | `/auth/login`  | Login de utilizador                    | Não  |
 | POST   | `/auth/registo`| Registo de novo utilizador             | Não  |
-| GET    | `/auth/me`     | Verificar token / obter dados do user  | Sim  |
+| GET    | `/auth/confirm-email` | Confirmar conta via token        | Não  |
+| GET    | `/auth/me`     | Verificar token / obter dados do user  | Não  |
 
 ### POST `/auth/login`
 
@@ -205,6 +207,8 @@ Base path: `/user`
 
 Base path: `/ponto`
 
+> Os pontos suportam **múltiplas categorias** (relação muitos-para-muitos). A imagem pode ser enviada por upload direto ou por referência a um ficheiro da [Biblioteca de Media](#biblioteca-de-media).
+
 | Método | Endpoint                  | Descrição              | Auth |
 |--------|---------------------------|------------------------|------|
 | POST   | `/ponto/create`           | Criar ponto            | —    |
@@ -217,27 +221,48 @@ Base path: `/ponto`
 
 **Content-Type:** `multipart/form-data`
 
-| Campo       | Tipo   | Obrigatório | Descrição                      |
-|-------------|--------|-------------|--------------------------------|
-| name        | string | Sim         | Nome do ponto                  |
-| description | string | Não         | Descrição do ponto             |
-| latitude    | number | Sim         | Latitude                       |
-| longitude   | number | Sim         | Longitude                      |
-| id_categoria| number | Sim         | ID da categoria do ponto       |
-| image       | file   | Não         | Imagem 360° (encriptada no servidor) |
-| username    | string | Não         | Nome do utilizador (para logs) |
+| Campo         | Tipo           | Obrigatório | Descrição                                                    |
+|---------------|----------------|-------------|--------------------------------------------------------------|
+| name          | string         | Sim         | Nome do ponto                                                |
+| description   | string         | Não         | Descrição do ponto                                           |
+| latitude      | number         | Sim         | Latitude                                                     |
+| longitude     | number         | Sim         | Longitude                                                    |
+| id_categorias | number/array   | Sim         | ID(s) da(s) categoria(s) — aceita número, array JSON ou CSV  |
+| id_categoria  | number         | Sim*        | Alias legado para `id_categorias` (única categoria)          |
+| image         | file           | Não         | Imagem 360° (guardada na biblioteca de media)                |
+| imagePath     | string         | Não         | Caminho relativo de um ficheiro existente na biblioteca de media (alternativa ao upload) |
+| username      | string         | Não         | Nome do utilizador (para logs)                               |
+
+> *Utilizar `id_categorias` ou `id_categoria` — pelo menos uma categoria é obrigatória.
 
 **Resposta 201:**
 ```json
 {
   "message": "Ponto criado com sucesso",
-  "ponto": { "id_ponto": 1, "name": "...", "..." : "..." }
+  "ponto": {
+    "id_ponto": 1,
+    "name": "...",
+    "description": "...",
+    "latitude": 40.123,
+    "longitude": -8.456,
+    "id_categoria": 1,
+    "imagePath": "pontos/1234_foto.jpg",
+    "imageUrl": "http://.../uploads/pontos/1234_foto.jpg",
+    "environment": "http://.../uploads/pontos/1234_foto.jpg",
+    "image": null,
+    "visualizacoes": 0,
+    "categorias": [
+      { "id_categoria": 1, "name": "Monumentos" }
+    ]
+  }
 }
 ```
 
 > Emite evento WebSocket: `novoPonto`
 
 ### GET `/ponto/list`
+
+> A listagem **não inclui** o conteúdo binário da imagem (`image`/`iv` são excluídos). Inclui `imageUrl` (URL absoluto) e contagem de visualizações.
 
 **Resposta 200:**
 ```json
@@ -248,10 +273,17 @@ Base path: `/ponto`
       "name": "...",
       "description": "...",
       "id_categoria": 1,
-      "CategoriaPonto": { "id_categoria": 1, "name": "Monumentos" },
       "latitude": 40.123,
       "longitude": -8.456,
-      "image": "<base64>"
+      "imagePath": "pontos/1234_foto.jpg",
+      "imageUrl": "http://.../uploads/pontos/1234_foto.jpg",
+      "environment": "http://.../uploads/pontos/1234_foto.jpg",
+      "image": null,
+      "visualizacoes": 42,
+      "categorias": [
+        { "id_categoria": 1, "name": "Monumentos" },
+        { "id_categoria": 3, "name": "Praças" }
+      ]
     }
   ]
 }
@@ -259,13 +291,23 @@ Base path: `/ponto`
 
 ### GET `/ponto/:id`
 
+> Retorna o ponto com imagem desencriptada (base64) se existir no formato legado, ou `imageUrl` se usar a biblioteca de media. O campo `environment` contém a imagem disponível (URL ou base64).
+
 **Resposta 200:**
 ```json
 {
   "ponto": {
     "id_ponto": 1,
     "name": "...",
-    "image": "<base64>"
+    "description": "...",
+    "imagePath": "pontos/1234_foto.jpg",
+    "imageUrl": "http://.../uploads/pontos/1234_foto.jpg",
+    "environment": "http://.../uploads/pontos/1234_foto.jpg",
+    "image": "<base64 ou null>",
+    "visualizacoes": 0,
+    "categorias": [
+      { "id_categoria": 1, "name": "Monumentos" }
+    ]
   }
 }
 ```
@@ -274,19 +316,22 @@ Base path: `/ponto`
 
 **Content-Type:** `multipart/form-data`
 
-| Campo       | Tipo   | Obrigatório | Descrição         |
-|-------------|--------|-------------|-------------------|
-| name        | string | Não         | Novo nome         |
-| description | string | Não         | Nova descrição    |
-| latitude    | number | Não         | Nova latitude     |
-| longitude   | number | Não         | Nova longitude    |
-| id_categoria| number | Não         | Nova categoria    |
-| image       | file   | Não         | Nova imagem 360°  |
+| Campo         | Tipo           | Obrigatório | Descrição                                                    |
+|---------------|----------------|-------------|--------------------------------------------------------------|
+| name          | string         | Não         | Novo nome                                                    |
+| description   | string         | Não         | Nova descrição                                               |
+| latitude      | number         | Não         | Nova latitude                                                |
+| longitude     | number         | Não         | Nova longitude                                               |
+| id_categorias | number/array   | Não         | Nova(s) categoria(s) — aceita número, array JSON ou CSV      |
+| id_categoria  | number         | Não         | Alias legado para `id_categorias`                            |
+| image         | file           | Não         | Nova imagem 360°                                             |
+| imagePath     | string         | Não         | Caminho relativo na biblioteca de media (alternativa ao upload) |
 
 **Respostas:**
 | Código | Descrição |
 |--------|-----------|
 | 200    | Ponto atualizado com sucesso |
+| 400    | Pelo menos uma categoria é obrigatória / Categoria inválida |
 | 404    | Ponto não encontrado |
 | 500    | Erro ao atualizar ponto |
 
@@ -307,15 +352,19 @@ Base path: `/ponto`
 
 Base path: `/categoria`
 
-| Método | Endpoint                           | Descrição                     | Auth |
-|--------|------------------------------------|-------------------------------|------|
-| GET    | `/categoria/list`                  | Listar categorias             | —    |
-| GET    | `/categoria/:id_categoria`         | Obter categoria por ID        | —    |
+| Método | Endpoint                           | Descrição                     | Auth  |
+|--------|------------------------------------|-------------------------------|-------|
+| GET    | `/categoria/list`                  | Listar categorias             | —     |
+| GET    | `/categoria/:id_categoria`         | Obter categoria por ID        | —     |
 | POST   | `/categoria/create`                | Criar categoria               | Admin |
 | PATCH  | `/categoria/update/:id_categoria`  | Atualizar categoria           | Admin |
 | DELETE | `/categoria/delete/:id_categoria`  | Eliminar categoria            | Admin |
 
-### POST `/categoria/create`
+### GET `/categoria/list`
+
+> Retorna categorias ordenadas alfabeticamente (A-Z).
+
+### POST `/categoria/create` 🔒 Admin
 
 **Body:**
 ```json
@@ -332,7 +381,25 @@ Base path: `/categoria`
 | 409    | Categoria duplicada |
 | 500    | Erro ao criar categoria |
 
-### DELETE `/categoria/delete/:id_categoria`
+### PATCH `/categoria/update/:id_categoria` 🔒 Admin
+
+**Body:**
+```json
+{
+  "name": "Novo Nome"
+}
+```
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | Categoria atualizada com sucesso |
+| 400    | Nome obrigatório |
+| 404    | Categoria não encontrada |
+| 409    | Categoria duplicada |
+| 500    | Erro ao atualizar categoria |
+
+### DELETE `/categoria/delete/:id_categoria` 🔒 Admin
 
 **Respostas:**
 | Código | Descrição |
@@ -399,9 +466,12 @@ Base path: `/trajeto`
 
 **Content-Type:** `multipart/form-data`
 
-| Campo | Tipo | Obrigatório | Descrição          |
-|-------|------|-------------|--------------------|
-| video | file | Sim         | Ficheiro de vídeo  |
+| Campo     | Tipo   | Obrigatório | Descrição                                                       |
+|-----------|--------|-------------|-----------------------------------------------------------------|
+| video     | file   | Não*        | Ficheiro de vídeo                                               |
+| videoPath | string | Não*        | Caminho relativo na biblioteca de media (alternativa ao upload) |
+
+> *É obrigatório fornecer `video` (ficheiro) ou `videoPath` (referência).
 
 **Respostas:**
 | Código | Descrição |
@@ -493,10 +563,12 @@ Base path: `/hotspot`
 **Body:**
 ```json
 {
-  "tipo": "info",
+  "tipo": "texto",
   "conteudo": "Texto ou referência de conteúdo"
 }
 ```
+
+> `tipo` aceita: `"texto"`, `"imagem"`, `"modelo3d"`, `"audio"`, `"audioespacial"`, `"video"`, `"link"`.
 
 **Respostas:**
 | Código | Descrição |
@@ -530,22 +602,39 @@ Base path: `/estatistica`
 | GET    | `/estatistica/browsers`               | Distribuição por browser               | —    |
 | GET    | `/estatistica/so`                     | Distribuição por sistema operativo     | —    |
 | GET    | `/estatistica/timeline`               | Visualizações ao longo do tempo        | —    |
+| GET    | `/estatistica/historico`              | Histórico recente de acessos           | —    |
 | GET    | `/estatistica/top-pontos`             | Ranking de pontos mais visualizados    | —    |
 | GET    | `/estatistica/visualizacoes/:id_ponto`| Visualizações de um ponto específico   | —    |
 
 ### POST `/estatistica/`
 
-> O dispositivo, browser e sistema operativo são detetados automaticamente a partir do header `User-Agent`.
+> O dispositivo, browser e sistema operativo são detetados automaticamente a partir do header `User-Agent`. Clientes móveis, incluindo apps Expo/React Native, podem opcionalmente enviar estes campos explicitamente no body, num objeto `clientInfo`, ou pelos headers `x-device-type`, `x-client-browser` e `x-client-os`.
 
 **Body:**
 ```json
 {
   "tipo": "ponto",
-  "referencia_id": 1
+  "referencia_id": 1,
+  "dispositivo": "mobile",
+  "browser": "Expo Go",
+  "sistema_operativo": "iOS"
 }
 ```
 
-> `tipo` aceita: `"ponto"` ou `"rota"`.
+**Body alternativo (com `clientInfo`):**
+```json
+{
+  "tipo": "ponto",
+  "referencia_id": 1,
+  "clientInfo": {
+    "deviceType": "mobile",
+    "browser": "Expo Go",
+    "os": "iOS"
+  }
+}
+```
+
+> `tipo` aceita: `"ponto"` ou `"rota"`. `dispositivo` aceita: `"desktop"`, `"mobile"` ou `"tablet"`.
 
 **Respostas:**
 | Código | Descrição |
@@ -628,6 +717,29 @@ Base path: `/estatistica`
   "data": [
     { "dia": "2026-03-01", "desktop": 5, "mobile": 3, "tablet": 1, "total": 9 },
     { "dia": "2026-03-02", "desktop": 8, "mobile": 4, "tablet": 0, "total": 12 }
+  ]
+}
+```
+
+### GET `/estatistica/historico`
+
+> **Query params:** `limit` (opcional, default `20`, máximo `100`), `dias` (opcional).
+
+**Resposta 200:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id_visualizacao": 120,
+      "tipo": "ponto",
+      "referencia_id": 8,
+      "referencia_nome": "Praça Central",
+      "dispositivo": "mobile",
+      "browser": "Expo Go",
+      "sistema_operativo": "iOS",
+      "data_hora": "2026-03-12T14:32:10.000Z"
+    }
   ]
 }
 ```
@@ -803,6 +915,8 @@ Base path: `/convite`
 
 Base path: `/overlay`
 
+> Os overlays suportam upload direto de ficheiro ou referência a um ficheiro da [Biblioteca de Media](#biblioteca-de-media) via `mediaPath`.
+
 | Método | Endpoint              | Descrição              | Auth |
 |--------|-----------------------|------------------------|------|
 | POST   | `/overlay/create`     | Criar overlay          | —    |
@@ -815,11 +929,14 @@ Base path: `/overlay`
 
 **Content-Type:** `multipart/form-data` (limite de 100 MB)
 
-| Campo    | Tipo   | Obrigatório | Descrição                              |
-|----------|--------|-------------|----------------------------------------|
-| file     | file   | Sim         | Ficheiro (imagem, vídeo ou modelo 3D)  |
-| tipo     | string | Não         | Tipo de overlay                        |
-| username | string | Não         | Nome do utilizador (para logs)         |
+| Campo     | Tipo   | Obrigatório | Descrição                                                       |
+|-----------|--------|-------------|-----------------------------------------------------------------|
+| file      | file   | Não*        | Ficheiro (imagem, vídeo ou modelo 3D)                           |
+| mediaPath | string | Não*        | Caminho relativo na biblioteca de media (alternativa ao upload) |
+| tipo      | string | Sim         | Tipo de overlay: `"imagem"`, `"video"` ou `"modelo3d"`          |
+| username  | string | Não         | Nome do utilizador (para logs)                                  |
+
+> *É obrigatório fornecer `file` (ficheiro) ou `mediaPath` (referência). O conteúdo é armazenado em binário na base de dados.
 
 **Respostas:**
 | Código | Descrição |
@@ -837,9 +954,10 @@ Base path: `/overlay`
 {
   "overlays": [
     {
-      "id_map_overlay": 1,
+      "id": 1,
       "tipo": "imagem",
-      "conteudo": "<base64>"
+      "conteudo": "<base64>",
+      "mediaPath": "overlays/mapa.png"
     }
   ]
 }
@@ -851,9 +969,10 @@ Base path: `/overlay`
 ```json
 {
   "overlay": {
-    "id_map_overlay": 1,
+    "id": 1,
     "tipo": "imagem",
-    "conteudo": "<base64>"
+    "conteudo": "<base64>",
+    "mediaPath": "overlays/mapa.png"
   }
 }
 ```
@@ -862,10 +981,11 @@ Base path: `/overlay`
 
 **Content-Type:** `multipart/form-data`
 
-| Campo | Tipo   | Obrigatório | Descrição         |
-|-------|--------|-------------|-------------------|
-| file  | file   | Não         | Novo ficheiro     |
-| tipo  | string | Não         | Novo tipo         |
+| Campo     | Tipo   | Obrigatório | Descrição                                                       |
+|-----------|--------|-------------|-----------------------------------------------------------------|
+| file      | file   | Não         | Novo ficheiro                                                   |
+| mediaPath | string | Não         | Caminho relativo na biblioteca de media (alternativa ao upload) |
+| tipo      | string | Não         | Novo tipo                                                       |
 
 **Respostas:**
 | Código | Descrição |
@@ -896,14 +1016,18 @@ Base path: `/theme`
 | GET    | `/theme/active`           | Obter tema ativo                   | Não   |
 | GET    | `/theme/list`             | Listar todos os presets            | Não   |
 | GET    | `/theme/landing-content`  | Obter textos da landing page       | Não   |
+| GET    | `/theme/favicon`          | Obter favicon do site              | Não   |
 | GET    | `/theme/:id`              | Obter preset por ID                | Não   |
 | POST   | `/theme/create`           | Criar preset de tema               | Admin |
 | PUT    | `/theme/update/:id`       | Atualizar preset                   | Admin |
 | DELETE | `/theme/delete/:id`       | Eliminar preset                    | Admin |
 | POST   | `/theme/set-active`       | Definir tema ativo                 | Admin |
 | POST   | `/theme/landing-content`  | Atualizar textos da landing page   | Admin |
+| POST   | `/theme/favicon`          | Atualizar favicon do site          | Admin |
 
 ### GET `/theme/active`
+
+> Retorna o preset de tema ativo. Se nenhum estiver definido, retorna o preset por defeito do sistema.
 
 **Resposta 200:**
 ```json
@@ -919,8 +1043,6 @@ Base path: `/theme`
   }
 }
 ```
-
-> Retorna `data: null` se nenhum tema estiver ativo (usar defaults).
 
 ### GET `/theme/list`
 
@@ -946,13 +1068,15 @@ Base path: `/theme`
 
 **Content-Type:** `multipart/form-data`
 
-| Campo     | Tipo   | Obrigatório | Descrição                              |
-|-----------|--------|-------------|----------------------------------------|
-| name      | string | Sim         | Nome do preset                         |
-| lightVars | string | Não         | Variáveis do tema claro (JSON string)  |
-| darkVars  | string | Não         | Variáveis do tema escuro (JSON string) |
-| logoLight | file   | Não         | Logo para modo claro (.png/.jpg/.svg/.webp, max 5MB) |
-| logoDark  | file   | Não         | Logo para modo escuro (.png/.jpg/.svg/.webp, max 5MB) |
+| Campo         | Tipo   | Obrigatório | Descrição                                                             |
+|---------------|--------|-------------|-----------------------------------------------------------------------|
+| name          | string | Sim         | Nome do preset                                                        |
+| lightVars     | string | Não         | Variáveis do tema claro (JSON string)                                 |
+| darkVars      | string | Não         | Variáveis do tema escuro (JSON string)                                |
+| logoLight     | file   | Não         | Logo para modo claro (.png/.jpg/.svg/.webp, max 5MB)                  |
+| logoDark      | file   | Não         | Logo para modo escuro (.png/.jpg/.svg/.webp, max 5MB)                 |
+| logoLightPath | string | Não         | Caminho relativo na biblioteca de media (alternativa a upload de logo claro)  |
+| logoDarkPath  | string | Não         | Caminho relativo na biblioteca de media (alternativa a upload de logo escuro) |
 
 **Respostas:**
 | Código | Descrição |
@@ -964,7 +1088,7 @@ Base path: `/theme`
 
 ### PUT `/theme/update/:id` 🔒 Admin
 
-Mesmos campos que `create` (todos opcionais). Logos anteriores são removidos ao carregar novos.
+Mesmos campos que `create` (todos opcionais). Logos anteriores são substituídos ao fornecer novos.
 
 **Respostas:**
 | Código | Descrição |
@@ -976,7 +1100,7 @@ Mesmos campos que `create` (todos opcionais). Logos anteriores são removidos ao
 
 ### DELETE `/theme/delete/:id` 🔒 Admin
 
-> Se o preset eliminado era o tema ativo, a configuração é limpa (revertida para values por defeito).
+> Se o preset eliminado era o tema ativo, a configuração é limpa (revertida para valores por defeito).
 
 **Respostas:**
 | Código | Descrição |
@@ -1033,22 +1157,271 @@ Mesmos campos que `create` (todos opcionais). Logos anteriores são removidos ao
 | 400    | Título / Descrição obrigatórios |
 | 500    | Erro interno |
 
+### GET `/theme/favicon`
+
+**Resposta 200:**
+```json
+{
+  "success": true,
+  "data": {
+    "path": "logos/favicon.ico",
+    "url": "http://.../uploads/logos/favicon.ico"
+  }
+}
+```
+
+### POST `/theme/favicon` 🔒 Admin
+
+**Body:**
+```json
+{
+  "faviconPath": "logos/favicon.ico"
+}
+```
+
+> `faviconPath` é um caminho relativo na biblioteca de media. Enviar `faviconPath: null` ou vazio para remover o favicon personalizado.
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | Favicon atualizado |
+| 500    | Erro interno |
+
+---
+
+## Biblioteca de Media
+
+Base path: `/media`
+
+> Gestor de ficheiros integrado para uploads, organização e reutilização de media (imagens, vídeos, modelos 3D, etc.). Todos os endpoints requerem autenticação.
+
+| Método | Endpoint            | Descrição                                    | Auth |
+|--------|---------------------|----------------------------------------------|------|
+| GET    | `/media/tree`       | Obter árvore de pastas                       | Sim  |
+| GET    | `/media/list`       | Listar ficheiros e pastas de um diretório    | Sim  |
+| GET    | `/media/references` | Obter referências a um ficheiro              | Sim  |
+| POST   | `/media/folder`     | Criar pasta                                  | Sim  |
+| POST   | `/media/move`       | Mover ficheiro ou pasta                      | Sim  |
+| POST   | `/media/upload`     | Upload de ficheiros                          | Sim  |
+| DELETE | `/media/item`       | Eliminar ficheiro ou pasta                   | Sim  |
+
+### GET `/media/tree`
+
+> Retorna a estrutura de pastas (apenas diretórios) em formato de árvore recursiva.
+
+**Resposta 200:**
+```json
+{
+  "success": true,
+  "tree": {
+    "name": "uploads",
+    "path": "",
+    "type": "folder",
+    "children": [
+      {
+        "name": "logos",
+        "path": "logos",
+        "type": "folder",
+        "children": []
+      },
+      {
+        "name": "pontos",
+        "path": "pontos",
+        "type": "folder",
+        "children": []
+      }
+    ]
+  }
+}
+```
+
+### GET `/media/list`
+
+> **Query params:** `path` (opcional) — caminho relativo da pasta a listar (default: raiz).
+
+**Resposta 200:**
+```json
+{
+  "success": true,
+  "path": "pontos",
+  "items": [
+    {
+      "name": "foto.jpg",
+      "path": "pontos/foto.jpg",
+      "type": "file",
+      "extension": ".jpg",
+      "size": 1234567,
+      "modifiedAt": "2026-03-10T12:00:00.000Z"
+    },
+    {
+      "name": "subpasta",
+      "path": "pontos/subpasta",
+      "type": "folder",
+      "extension": "",
+      "size": null,
+      "modifiedAt": "2026-03-10T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | Lista de itens |
+| 404    | Pasta não encontrada |
+| 500    | Erro ao listar pasta |
+
+### GET `/media/references`
+
+> Procura todas as referências a um ficheiro na base de dados (trajetos, pontos, overlays, temas, configurações) e no código-fonte.
+
+> **Query params:** `path` (obrigatório) — caminho relativo do ficheiro.
+
+**Resposta 200:**
+```json
+{
+  "success": true,
+  "references": [
+    {
+      "type": "trajeto.video",
+      "id": 1,
+      "label": "Trajeto #1",
+      "details": "/uploads/videos/video.mp4"
+    },
+    {
+      "type": "theme.logoLight",
+      "id": 2,
+      "label": "Preset Escuro",
+      "details": "http://.../uploads/logos/logo.png"
+    },
+    {
+      "type": "code.path",
+      "id": "frontend/src/app/page.js:42",
+      "label": "frontend/src/app/page.js:42",
+      "details": "const img = '/uploads/pontos/foto.jpg';"
+    }
+  ]
+}
+```
+
+> Tipos de referência possíveis: `trajeto.video`, `theme.logoLight`, `theme.logoDark`, `app.setting`, `ponto.image`, `overlay.media`, `code.path`, `code.filename`.
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | Lista de referências |
+| 400    | `path` é obrigatório |
+| 500    | Erro ao procurar referências |
+
+### POST `/media/folder`
+
+**Body:**
+```json
+{
+  "parentPath": "pontos",
+  "name": "nova-pasta"
+}
+```
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 201    | `{ success: true, folderPath: "pontos/nova-pasta" }` |
+| 400    | Nome da pasta é obrigatório / Nome inválido |
+| 409    | Já existe um item com esse nome |
+| 500    | Erro ao criar pasta |
+
+### POST `/media/move`
+
+**Body:**
+```json
+{
+  "sourcePath": "pontos/foto.jpg",
+  "destinationPath": "pontos/subpasta"
+}
+```
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | `{ success: true, path: "pontos/subpasta/foto.jpg" }` |
+| 400    | `sourcePath` obrigatório / Não é possível mover pasta para dentro dela própria |
+| 404    | Item de origem ou pasta de destino não encontrado |
+| 500    | Erro ao mover item |
+
+### POST `/media/upload`
+
+**Content-Type:** `multipart/form-data`
+
+| Campo           | Tipo   | Obrigatório | Descrição                                          |
+|-----------------|--------|-------------|---------------------------------------------------|
+| files           | file[] | Sim         | Até 50 ficheiros, máximo 250 MB cada               |
+| destinationPath | string | Não         | Pasta de destino (default: raiz dos uploads)       |
+
+> Se já existir um ficheiro com o mesmo nome, é adicionado um sufixo numérico automático (ex: `foto (1).jpg`).
+
+**Resposta 201:**
+```json
+{
+  "success": true,
+  "files": [
+    {
+      "name": "foto.jpg",
+      "originalName": "foto.jpg",
+      "size": 1234567,
+      "mimeType": "image/jpeg",
+      "path": "pontos/foto.jpg",
+      "url": "/uploads/pontos/foto.jpg"
+    }
+  ]
+}
+```
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 201    | Upload bem-sucedido |
+| 400    | Nenhum ficheiro enviado |
+| 413    | Ficheiro demasiado grande (limite 250MB por ficheiro) |
+| 500    | Erro ao fazer upload |
+
+### DELETE `/media/item`
+
+**Body ou Query params:**
+```json
+{
+  "targetPath": "pontos/foto.jpg"
+}
+```
+
+> Também aceita `?path=pontos/foto.jpg` como query param. Pastas são eliminadas recursivamente.
+
+**Respostas:**
+| Código | Descrição |
+|--------|-----------|
+| 200    | Item eliminado com sucesso |
+| 400    | `targetPath` é obrigatório |
+| 404    | Item não encontrado |
+| 500    | Erro ao apagar item |
+
 ---
 
 ## Ficheiros Estáticos
 
-| Rota                  | Descrição                                |
-|-----------------------|------------------------------------------|
-| `/uploads/logos/*`    | Logos dos temas                          |
-| `/uploads/videos/*`  | Vídeos dos trajetos                      |
+| Rota             | Descrição                                            |
+|------------------|------------------------------------------------------|
+| `/uploads/*`     | Todos os ficheiros da biblioteca de media            |
 
-Servidos como ficheiros estáticos via `express.static`.
+Servidos como ficheiros estáticos via `express.static`. A rota `/uploads` serve ficheiros de múltiplos diretórios de uploads (primário e legado).
 
 ---
 
 ## WebSocket (Socket.IO)
 
 A aplicação utiliza **Socket.IO** para comunicação em tempo real.
+
+**Configuração:** websocket + polling, ping a cada 25s, timeout de 60s.
 
 ### Eventos emitidos pelo servidor
 
@@ -1095,14 +1468,20 @@ A aplicação disponibiliza dois middlewares em `middleware/auth.js`:
 
 ## Variáveis de Ambiente
 
-| Variável         | Descrição                                         |
-|------------------|---------------------------------------------------|
-| `PORT`           | Porta do servidor (default: `3000`)               |
-| `JWT_SECRET`     | Chave secreta para assinar tokens JWT             |
-| `ENCRYPTION_KEY` | Chave para encriptar imagens dos pontos (AES-256) |
-| `FRONTEND_URL`   | URL do frontend (usado em emails)                 |
-| `FRONTEND_URLS`  | URLs permitidas no CORS (separadas por vírgula)   |
-| `BACKEND_URL`    | URL pública do backend (para gerar URLs de logos) |
-| `MJ_APIKEY_PUBLIC`  | Chave pública do Mailjet                       |
-| `MJ_APIKEY_PRIVATE` | Chave privada do Mailjet                       |
-| `NODE_ENV`       | Ambiente (`production` / `development`)           |
+| Variável            | Descrição                                                              |
+|---------------------|------------------------------------------------------------------------|
+| `PORT`              | Porta do servidor (default: `3000`)                                    |
+| `JWT_SECRET`        | Chave secreta para assinar tokens JWT                                  |
+| `ENCRYPTION_KEY`    | Chave para encriptar imagens dos pontos (AES-256). Obrigatória em produção |
+| `FRONTEND_URL`      | URL do frontend (usado em emails)                                      |
+| `FRONTEND_URLS`     | URLs permitidas no CORS (separadas por vírgula)                        |
+| `BACKEND_URL`       | URL pública do backend (para gerar URLs de logos e media)              |
+| `DB_HOST`           | Host da base de dados MySQL (default: `localhost`)                     |
+| `DB_USER`           | Utilizador da base de dados                                            |
+| `DB_PASSWORD`       | Password da base de dados                                              |
+| `DB_NAME`           | Nome da base de dados                                                  |
+| `MJ_APIKEY_PUBLIC`  | Chave pública do Mailjet                                               |
+| `MJ_APIKEY_PRIVATE` | Chave privada do Mailjet                                               |
+| `MAIL_FROM_EMAIL`   | Email de envio (remetente do Mailjet)                                  |
+| `MAIL_FROM_NAME`    | Nome do remetente (default: `Galerias 360`)                            |
+| `NODE_ENV`          | Ambiente (`production` / `development`)                                |

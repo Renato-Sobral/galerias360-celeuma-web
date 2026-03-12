@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 require("./models/associations");
-const path = require('path');
 const http = require("http");
 const { Server } = require("socket.io");
 const sequelize = require("./models/database");
@@ -19,6 +18,8 @@ const mapOverlayRoutes = require('./routes/mapOverlayRoutes');
 const themeRoutes = require('./routes/themeRoutes');
 const categoriaPontoRoutes = require('./routes/categoriaPontoRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const { PRIMARY_UPLOADS_ROOT, LEGACY_UPLOADS_ROOT } = require('./utils/mediaLibrary');
+const { seedDefaultThemePresets } = require('./services/themePresetDefaults');
 //const estatistica = require('./models/estatistica');
 
 const PORT = process.env.PORT || 3000;
@@ -77,7 +78,8 @@ app.use('/ponto', pontoRoutes);
 app.use('/log', logRoutes);
 app.use('/trajeto', trajetoRoutes);
 app.use('/hotspot', hotspotRoutes);
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(PRIMARY_UPLOADS_ROOT));
+app.use('/uploads', express.static(LEGACY_UPLOADS_ROOT));
 app.use('/estatistica', estatisticaRoutes);
 app.use('/password', passwordRoutes);
 app.use('/convite', conviteRoutes);
@@ -85,7 +87,6 @@ app.use('/overlay', mapOverlayRoutes);
 app.use('/theme', themeRoutes);
 app.use('/categoria', categoriaPontoRoutes);
 app.use('/media', mediaRoutes);
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 io.on("connection", (socket) => {
   console.log(`🔗 Cliente conectado: ${socket.id}`);
@@ -95,11 +96,18 @@ io.on("connection", (socket) => {
   });
 });
 
-sequelize.sync({ alter: true })
-  .then(() => console.log("✅ Tabelas sincronizadas com sucesso!"))
-  .catch(err => console.error("❌ Erro ao sincronizar tabelas:", err));
+async function bootstrap() {
+  await sequelize.sync({ alter: true });
+  console.log("✅ Tabelas sincronizadas com sucesso!");
 
+  await seedDefaultThemePresets();
 
-server.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  server.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  });
+}
+
+bootstrap().catch((err) => {
+  console.error("❌ Erro ao iniciar servidor:", err);
+  process.exit(1);
 });
