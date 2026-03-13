@@ -6,12 +6,14 @@ import L from "leaflet";
 import "leaflet-routing-machine";
 import Swal from "sweetalert2";
 
-const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady }) => {
+const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady, onRouteRecomputeStart }) => {
   const map = useMap();
   const controlRef = useRef(null);
   const clickLayersRef = useRef([]);
+  const directionMarkersRef = useRef([]);
   const onClickRef = useRef(onClick);
   const onRouteReadyRef = useRef(onRouteReady);
+  const onRouteRecomputeStartRef = useRef(onRouteRecomputeStart);
   const videoInsertedRef = useRef(false);
   const hasRouteDetailsRef = useRef(false);
   const routeReadyNotifiedRef = useRef(false);
@@ -19,6 +21,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
   // Estados para controlar modal e URL do vídeo
   const [modalOpen, setModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState(null);
+  const [isDirectionReversed, setIsDirectionReversed] = useState(false);
 
   const normalizedCoordinates = useMemo(() => {
     if (!Array.isArray(coordinates)) return [];
@@ -28,9 +31,14 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
       .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
   }, [coordinates]);
 
+  const routeCoordinates = useMemo(() => {
+    if (!isDirectionReversed) return normalizedCoordinates;
+    return [...normalizedCoordinates].reverse();
+  }, [normalizedCoordinates, isDirectionReversed]);
+
   const coordinatesSignature = useMemo(
-    () => normalizedCoordinates.map(([lat, lng]) => `${lat},${lng}`).join("|"),
-    [normalizedCoordinates]
+    () => routeCoordinates.map(([lat, lng]) => `${lat},${lng}`).join("|"),
+    [routeCoordinates]
   );
 
   const waypointsFromSignature = useMemo(() => {
@@ -73,6 +81,10 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
     onRouteReadyRef.current = onRouteReady;
   }, [onRouteReady]);
 
+  useEffect(() => {
+    onRouteRecomputeStartRef.current = onRouteRecomputeStart;
+  }, [onRouteRecomputeStart]);
+
   const clearClickLayers = () => {
     clickLayersRef.current.forEach((layer) => {
       if (map.hasLayer(layer)) {
@@ -80,6 +92,64 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
       }
     });
     clickLayersRef.current = [];
+  };
+
+  const clearDirectionMarkers = () => {
+    directionMarkersRef.current.forEach((marker) => {
+      if (map.hasLayer(marker)) {
+        map.removeLayer(marker);
+      }
+    });
+    directionMarkersRef.current = [];
+  };
+
+  const addDirectionMarkers = (routeCoordinates) => {
+    clearDirectionMarkers();
+
+    if (!Array.isArray(routeCoordinates) || routeCoordinates.length < 3) {
+      return;
+    }
+
+    const markerStep = Math.max(10, Math.floor(routeCoordinates.length / 14));
+
+    for (let i = markerStep; i < routeCoordinates.length - 1; i += markerStep) {
+      const prev = routeCoordinates[i - 1];
+      const current = routeCoordinates[i];
+      const next = routeCoordinates[Math.min(i + 1, routeCoordinates.length - 1)];
+
+      if (!prev || !current || !next) continue;
+
+      const prevPoint = map.latLngToLayerPoint(prev);
+      const nextPoint = map.latLngToLayerPoint(next);
+      const deltaX = nextPoint.x - prevPoint.x;
+      const deltaY = nextPoint.y - prevPoint.y;
+      const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+
+      const arrowIcon = L.divIcon({
+        className: "route-direction-arrow",
+        iconSize: [8, 8],
+        iconAnchor: [4, 4],
+        html: `
+          <svg
+            width="8"
+            height="8"
+            viewBox="0 0 12 12"
+            style="display:block; transform: rotate(${angle}deg); transform-origin: center;"
+          >
+            <path d="M1 2 L11 6 L1 10 Z" fill="#ffffff" stroke="#111827" stroke-opacity="0.1" stroke-width="1.4" />
+          </svg>
+        `,
+      });
+
+      const marker = L.marker(current, {
+        icon: arrowIcon,
+        interactive: false,
+        keyboard: false,
+        zIndexOffset: 600,
+      }).addTo(map);
+
+      directionMarkersRef.current.push(marker);
+    }
   };
 
   useEffect(() => {
@@ -93,8 +163,13 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
         lineOptions: {
           styles: [{ color: "hsl(var(--primary))", weight: 5 }],
         },
+        formatter: new L.Routing.Formatter({
+          language: "pt-PT",
+          units: "metric",
+        }),
         router: L.Routing.osrmv1({
           serviceUrl: "https://router.project-osrm.org/route/v1",
+          language: "pt-PT",
           // para caminho a pé: adicionar profile 'foot' se necessário via router customizado
         }),
         defaultErrorHandler: null,
@@ -116,6 +191,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
         clearClickLayers();
 
         const routeLayer = e.routes[0].coordinates;
+        addDirectionMarkers(routeLayer);
 
         const clickLayer = L.polyline(routeLayer, {
           color: "transparent",
@@ -167,19 +243,24 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
           Object.assign(container.style, {
             display: "block",
             zIndex: "9999",
-            position: "absolute",
-            top: "20px",
-            right: "20px",
+            position: "fixed",
+            top: "auto",
+            right: "auto",
+            bottom: "12px",
+            left: "96px",
             backgroundColor: isDark
               ? "rgba(0, 0, 0, 0.95)"
               : "rgba(255, 255, 255, 0.9)",
             color: isDark ? "#ffffff" : "#0A0A0A",
-            padding: "16px",
-            width: "20vw",
+            padding: "10px 12px",
+            width: "min(340px, calc(100vw - 108px))",
             borderRadius: "8px",
             boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
-            maxHeight: "40vh",
+            maxHeight: "65vh",
             overflowY: "auto",
+            boxSizing: "border-box",
+            fontSize: "14px",
+            lineHeight: "1.35",
           });
 
           // Remover scroll interno do .leaflet-routing-alt para evitar scroll duplo
@@ -214,13 +295,22 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
             if (alt && !alt.querySelector(".video-play-button")) {
               const h3 = alt.querySelector("h3");
 
+              const actionRow = document.createElement("div");
+              actionRow.className = "route-actions-row";
+              Object.assign(actionRow.style, {
+                marginTop: "8px",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+              });
+
               const button = document.createElement("button");
               button.className = "video-play-button";
               button.title = "Ver vídeo do trajeto";
               button.setAttribute("type", "button");
               Object.assign(button.style, {
-                marginTop: "8px",
-                marginBottom: "12px",
                 fontSize: "14px",
                 color: isDark ? "#f3f3f3" : "#0A0A0A",
                 backgroundColor: "transparent",
@@ -262,10 +352,42 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
 
               button.addEventListener("click", handlePlayClick);
 
+              const invertButton = document.createElement("button");
+              invertButton.className = "route-reverse-button";
+              invertButton.title = "Inverter direção da rota";
+              invertButton.setAttribute("type", "button");
+              Object.assign(invertButton.style, {
+                fontSize: "13px",
+                color: isDark ? "#f3f3f3" : "#0A0A0A",
+                backgroundColor: "transparent",
+                border: `1px solid ${isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.2)"}`,
+                cursor: "pointer",
+                padding: "4px 8px",
+                borderRadius: "4px",
+                transition: "background-color 0.3s ease",
+              });
+              invertButton.textContent = "Inverter direção";
+
+              invertButton.onmouseover = () => {
+                invertButton.style.backgroundColor = isDark
+                  ? "rgba(255, 255, 255, 0.16)"
+                  : "rgba(0, 0, 0, 0.06)";
+              };
+              invertButton.onmouseout = () => {
+                invertButton.style.backgroundColor = "transparent";
+              };
+              invertButton.addEventListener("click", () => {
+                onRouteRecomputeStartRef.current?.();
+                setIsDirectionReversed((prev) => !prev);
+              });
+
+              actionRow.appendChild(button);
+              actionRow.appendChild(invertButton);
+
               if (h3?.parentNode) {
-                h3.parentNode.insertBefore(button, h3.nextSibling);
+                h3.parentNode.insertBefore(actionRow, h3.nextSibling);
               } else {
-                alt.prepend(button);
+                alt.prepend(actionRow);
               }
 
               videoInsertedRef.current = true;
@@ -295,6 +417,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
 
         hasRouteDetailsRef.current = false;
         clearClickLayers();
+        clearDirectionMarkers();
 
         const container = control._container;
         if (container) {
@@ -314,6 +437,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
 
     return () => {
       clearClickLayers();
+      clearDirectionMarkers();
 
       if (controlRef.current) {
         controlRef.current.off();

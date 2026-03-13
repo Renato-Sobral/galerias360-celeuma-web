@@ -4,6 +4,20 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
+function getApiBase() {
+  const configuredBase = process.env.NEXT_PUBLIC_API_URL;
+
+  if (typeof configuredBase === "string" && configuredBase.trim()) {
+    return configuredBase.replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:3000`;
+  }
+
+  return "http://localhost:3000";
+}
+
 /**
  * Componente de proteção de rota baseado em roles.
  * @param {JSX.Element | Function} children - Elemento ou função que recebe `userRole`.
@@ -14,6 +28,7 @@ const ProtectedRoute = ({ children, rolesRequired }) => {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userRole, setUserRole] = useState(null);
+  const [statusMessage, setStatusMessage] = useState("A validar sessão...");
 
   const requiredRoles = Array.isArray(rolesRequired)
     ? rolesRequired
@@ -27,12 +42,14 @@ const ProtectedRoute = ({ children, rolesRequired }) => {
 
       if (!token) {
         console.warn("Token não encontrado. Redirecionando para login...");
+        setStatusMessage("Sessão não encontrada. A redirecionar...");
+        setLoading(false);
         router.push("/login");
         return;
       }
 
       try {
-        const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+        const response = await axios.get(`${getApiBase()}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -66,11 +83,13 @@ const ProtectedRoute = ({ children, rolesRequired }) => {
           setIsAuthorized(true);
         } else {
           console.warn("Utilizador não autorizado. Redirecionando...");
+          setStatusMessage("Sem permissões para esta página. A redirecionar...");
           // Não remover token: é um caso de "forbidden", não "unauthenticated"
           router.push("/map");
         }
       } catch (error) {
         console.error("Erro ao verificar autorização:", error);
+        setStatusMessage("Não foi possível validar a sessão. A redirecionar...");
         localStorage.removeItem("authToken");
         router.push("/login");
       } finally {
@@ -81,7 +100,13 @@ const ProtectedRoute = ({ children, rolesRequired }) => {
     checkUser();
   }, [router, rolesRequired]);
 
-  if (loading || !isAuthorized) return null;
+  if (loading || !isAuthorized) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
+        <p className="text-sm text-muted-foreground">{statusMessage}</p>
+      </div>
+    );
+  }
 
   return typeof children === "function" ? children(userRole) : children;
 };

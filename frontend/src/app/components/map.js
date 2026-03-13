@@ -84,23 +84,6 @@ export default function MapComponent() {
         return String(value);
     }, []);
 
-    useEffect(() => {
-        if (!showRoutes) return;
-
-        const routeKeys = rotas
-            .map((trajeto, index) => getRouteKey(trajeto, index))
-            .filter(Boolean);
-
-        if (routeKeys.length === 0) {
-            setRoutesLoading(false);
-            pendingRouteKeysRef.current.clear();
-            return;
-        }
-
-        pendingRouteKeysRef.current = new Set(routeKeys);
-        setRoutesLoading(true);
-    }, [showRoutes, rotas, getRouteKey]);
-
     const handleRouteReady = useCallback((routeKey) => {
         if (!showRoutes) return;
 
@@ -113,19 +96,13 @@ export default function MapComponent() {
         }
     }, [showRoutes]);
 
-    const handleShowRoutesChange = useCallback((checked) => {
-        setShowRoutes(checked);
+    const handleRouteRecomputeStart = useCallback((routeKey) => {
+        if (!showRoutes) return;
 
-        if (!checked) {
-            setRoutesLoading(false);
-            pendingRouteKeysRef.current.clear();
-            setRotaSelecionada(null);
-            return;
-        }
-
-        const hasRoutes = rotas.length > 0;
-        setRoutesLoading(hasRoutes);
-    }, [rotas.length]);
+        const key = String(routeKey);
+        pendingRouteKeysRef.current.add(key);
+        setRoutesLoading(true);
+    }, [showRoutes]);
 
     const loadPontos = useCallback(async () => {
         try {
@@ -180,6 +157,70 @@ export default function MapComponent() {
         const listaCategorias = Array.isArray(categoriasPonto) ? categoriasPonto : [categoriasPonto];
         return listaCategorias.some((categoria) => String(categoria?.id_categoria) === String(selectedCategoriaFilter));
     }), [pontos, selectedCategoriaFilter]);
+
+    const pontosVisiveisPorId = useMemo(() => new Set(
+        pontosFiltrados
+            .map((ponto) => ponto?.id_ponto)
+            .filter((id) => id !== undefined && id !== null)
+            .map((id) => String(id))
+    ), [pontosFiltrados]);
+
+    const pontosVisiveisPorCoordenadas = useMemo(() => new Set(
+        pontosFiltrados
+            .filter((ponto) => Number.isFinite(Number(ponto?.latitude)) && Number.isFinite(Number(ponto?.longitude)))
+            .map((ponto) => `${Number(ponto.latitude).toFixed(6)}:${Number(ponto.longitude).toFixed(6)}`)
+    ), [pontosFiltrados]);
+
+    const rotasVisiveis = useMemo(() => rotas.filter((trajeto) => {
+        const pontosTrajeto = Array.isArray(trajeto?.pontos) ? trajeto.pontos : [];
+
+        const pontosVisiveisNoTrajeto = pontosTrajeto.filter((ponto) => {
+            const idPonto = ponto?.id_ponto;
+            if (idPonto !== undefined && idPonto !== null) {
+                return pontosVisiveisPorId.has(String(idPonto));
+            }
+
+            if (!Number.isFinite(Number(ponto?.latitude)) || !Number.isFinite(Number(ponto?.longitude))) {
+                return false;
+            }
+
+            const chaveCoordenadas = `${Number(ponto.latitude).toFixed(6)}:${Number(ponto.longitude).toFixed(6)}`;
+            return pontosVisiveisPorCoordenadas.has(chaveCoordenadas);
+        });
+
+        return pontosVisiveisNoTrajeto.length >= 2;
+    }), [rotas, pontosVisiveisPorId, pontosVisiveisPorCoordenadas]);
+
+    useEffect(() => {
+        if (!showRoutes) return;
+
+        const routeKeys = rotasVisiveis
+            .map((trajeto, index) => getRouteKey(trajeto, index))
+            .filter(Boolean);
+
+        if (routeKeys.length === 0) {
+            setRoutesLoading(false);
+            pendingRouteKeysRef.current.clear();
+            return;
+        }
+
+        pendingRouteKeysRef.current = new Set(routeKeys);
+        setRoutesLoading(true);
+    }, [showRoutes, rotasVisiveis, getRouteKey]);
+
+    const handleShowRoutesChange = useCallback((checked) => {
+        setShowRoutes(checked);
+
+        if (!checked) {
+            setRoutesLoading(false);
+            pendingRouteKeysRef.current.clear();
+            setRotaSelecionada(null);
+            return;
+        }
+
+        const hasRoutes = rotasVisiveis.length > 0;
+        setRoutesLoading(hasRoutes);
+    }, [rotasVisiveis.length]);
 
     const handlePontoRightClick = useCallback((e, ponto) => {
         if (!isAdmin) return;
@@ -392,7 +433,7 @@ export default function MapComponent() {
                     />
                 ))}
 
-                {showRoutes && rotas.map((trajeto, index) => {
+                {showRoutes && rotasVisiveis.map((trajeto, index) => {
                     const coords = trajeto.pontos.map(p => [p.latitude, p.longitude]);
                     const routeKey = getRouteKey(trajeto, index);
                     return (
@@ -404,6 +445,7 @@ export default function MapComponent() {
                             active={index === rotaSelecionada}
                             onClick={() => setRotaSelecionada(index)}
                             onRouteReady={() => handleRouteReady(routeKey)}
+                            onRouteRecomputeStart={() => handleRouteRecomputeStart(routeKey)}
                         />
                     );
                 })}
@@ -1042,7 +1084,7 @@ function MapControls() {
         if (!window.isSecureContext && !isLocalHost) {
             Swal.fire({
                 title: "Localização bloqueada",
-                text: "A geolocalização requer HTTPS ou localhost. Usa http://localhost:3001 ou ativa HTTPS.",
+                text: "A geolocalização requer HTTPS ou localhost.",
                 icon: "warning",
                 confirmButtonColor: "#171717",
             });
