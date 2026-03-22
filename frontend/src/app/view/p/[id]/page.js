@@ -61,7 +61,7 @@ export default function PontoDetail() {
 
   if (error) return <p>{error}</p>;
   if (!ponto) return <p>Carregando...</p>;
-  
+
   return (
     <div className="flex min-h-screen">
       <div className="flex-1 overflow-hidden relative">
@@ -76,6 +76,7 @@ export default function PontoDetail() {
           environment={ponto.environment}
           enableContextMenu={true}
           pontoId={pontoId}
+          navigateOnHotspot={true}
         />
       </div>
     </div>

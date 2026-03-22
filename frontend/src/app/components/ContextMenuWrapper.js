@@ -11,11 +11,14 @@ export default function ContextMenuWrapper({
   children,
   options = [],
   onSelect = () => {},
+  onContextMenuCapture,
 }) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        {children}
+        <div className="h-full w-full" onContextMenuCapture={onContextMenuCapture}>
+          {children}
+        </div>
       </ContextMenuTrigger>
 
       <ContextMenuContent>

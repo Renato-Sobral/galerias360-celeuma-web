@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { MapContainer, TileLayer, useMap, useMapEvent } from "react-leaflet";
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from "react";
+import { MapContainer, TileLayer, Polyline, useMap, useMapEvent } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { getUserNameFromToken, getUserRoleFromToken } from "../components/jwtDecode";
 import CustomMarker from "../components/CustomMarker";
@@ -39,6 +39,33 @@ const MAP_VIEWS = {
     },
 };
 
+const ROUTE_GEOMETRY_CACHE_KEY = "route-geometry-cache-v1";
+const SHOW_ROUTES_CACHE_KEY = "show-routes-enabled-v1";
+
+const API_BASE =
+    (typeof process.env.NEXT_PUBLIC_API_URL === "string" && process.env.NEXT_PUBLIC_API_URL.trim())
+        ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+        : "";
+
+const buildApiUrl = (path) => {
+    if (!API_BASE) return path;
+    return `${API_BASE}${path}`;
+};
+
+const logNetworkError = (scope, url, error) => {
+    console.error(`${scope}: falha de rede ao contactar ${url}. Verifica NEXT_PUBLIC_API_URL, backend ativo e CORS.`, error);
+};
+
+const getInitialShowRoutesValue = () => {
+    if (typeof window === "undefined") return false;
+
+    try {
+        return localStorage.getItem(SHOW_ROUTES_CACHE_KEY) === "true";
+    } catch {
+        return false;
+    }
+};
+
 export default function MapComponent() {
     const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, latlng: null });
     const [formLateralOpen, setFormLateralOpen] = useState(false);
@@ -51,15 +78,51 @@ export default function MapComponent() {
     const [trajetoPontos, setTrajetoPontos] = useState([]);
     const [pontoMenu, setPontoMenu] = useState({ visible: false, x: 0, y: 0, ponto: null });
     const [rotaSelecionada, setRotaSelecionada] = useState(null);
-    const [showRoutes, setShowRoutes] = useState(false);
+    const [showRoutes, setShowRoutes] = useState(getInitialShowRoutesValue);
     const [mapView, setMapView] = useState("carto_voyager");
     const [mapViewMenuOpen, setMapViewMenuOpen] = useState(false);
     const [routesLoading, setRoutesLoading] = useState(false);
+    const [routesInitialized, setRoutesInitialized] = useState(getInitialShowRoutesValue);
+    const [readyRouteKeys, setReadyRouteKeys] = useState(() => new Set());
+    const [routeGeometryCache, setRouteGeometryCache] = useState({});
     const userRole = getUserRoleFromToken();
     const pendingRouteKeysRef = useRef(new Set());
+    const readyRouteKeysRef = useRef(new Set());
     const mapViewMenuRef = useRef(null);
     const isAdmin = userRole === "Admin";
     const selectedMapView = MAP_VIEWS[mapView] || MAP_VIEWS.carto_voyager;
+
+    const getCoordinatesSignature = useCallback((coords = []) => (
+        coords
+            .map(([lat, lng]) => `${Number(lat).toFixed(6)},${Number(lng).toFixed(6)}`)
+            .join("|")
+    ), []);
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(ROUTE_GEOMETRY_CACHE_KEY);
+            if (!raw) return;
+
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return;
+
+            setRouteGeometryCache(parsed);
+        } catch (error) {
+            console.error("Erro ao carregar cache de trajetos:", error);
+        }
+    }, []);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(SHOW_ROUTES_CACHE_KEY, String(showRoutes));
+        } catch (error) {
+            console.error("Erro ao guardar preferência de mostrar trajetos:", error);
+        }
+
+        if (showRoutes) {
+            setRoutesInitialized(true);
+        }
+    }, [showRoutes]);
 
     useEffect(() => {
         const handleOutsideClick = (event) => {
@@ -88,6 +151,13 @@ export default function MapComponent() {
         if (!showRoutes) return;
 
         const key = String(routeKey);
+        readyRouteKeysRef.current.add(key);
+        setReadyRouteKeys((prev) => {
+            if (prev.has(key)) return prev;
+            const next = new Set(prev);
+            next.add(key);
+            return next;
+        });
         if (!pendingRouteKeysRef.current.has(key)) return;
 
         pendingRouteKeysRef.current.delete(key);
@@ -100,35 +170,71 @@ export default function MapComponent() {
         if (!showRoutes) return;
 
         const key = String(routeKey);
+        readyRouteKeysRef.current.delete(key);
+        setReadyRouteKeys((prev) => {
+            if (!prev.has(key)) return prev;
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+        });
         pendingRouteKeysRef.current.add(key);
         setRoutesLoading(true);
     }, [showRoutes]);
 
+    const handleRouteGeometryComputed = useCallback((routeKey, signature, geometry) => {
+        if (!routeKey || !signature || !Array.isArray(geometry) || geometry.length < 2) return;
+
+        setRouteGeometryCache((prev) => {
+            const existing = prev[routeKey];
+            if (existing?.signature === signature) return prev;
+
+            const next = {
+                ...prev,
+                [routeKey]: {
+                    signature,
+                    geometry,
+                    updatedAt: Date.now(),
+                },
+            };
+
+            try {
+                localStorage.setItem(ROUTE_GEOMETRY_CACHE_KEY, JSON.stringify(next));
+            } catch (error) {
+                console.error("Erro ao guardar cache de trajetos:", error);
+            }
+
+            return next;
+        });
+    }, []);
+
     const loadPontos = useCallback(async () => {
+        const url = buildApiUrl("/ponto/list");
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ponto/list`);
+            const response = await fetch(url);
             if (!response.ok) throw new Error("Erro ao buscar pontos");
             const data = await response.json();
             setPontos(data.pontos);
         } catch (error) {
-            console.error("Erro ao carregar pontos:", error);
+            logNetworkError("Erro ao carregar pontos", url, error);
         }
     }, []);
 
     const loadCategorias = useCallback(async () => {
+        const url = buildApiUrl("/categoria/list");
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categoria/list`);
+            const response = await fetch(url);
             if (!response.ok) throw new Error("Erro ao buscar categorias");
             const data = await response.json();
             setCategorias(data.categorias || []);
         } catch (error) {
-            console.error("Erro ao carregar categorias:", error);
+            logNetworkError("Erro ao carregar categorias", url, error);
         }
     }, []);
 
     const loadRotas = useCallback(async () => {
+        const url = buildApiUrl("/trajeto/list");
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/trajeto/list`);
+            const res = await fetch(url);
             const data = await res.json();
             if (res.ok) {
                 setRotas(data.trajetos);
@@ -136,7 +242,7 @@ export default function MapComponent() {
                 console.error(data.error || "Erro ao buscar trajetos");
             }
         } catch (err) {
-            console.error("Erro ao buscar trajetos:", err);
+            logNetworkError("Erro ao buscar trajetos", url, err);
         }
     }, []);
 
@@ -204,8 +310,9 @@ export default function MapComponent() {
             return;
         }
 
-        pendingRouteKeysRef.current = new Set(routeKeys);
-        setRoutesLoading(true);
+        const pendingKeys = routeKeys.filter((key) => !readyRouteKeysRef.current.has(key));
+        pendingRouteKeysRef.current = new Set(pendingKeys);
+        setRoutesLoading(pendingKeys.length > 0);
     }, [showRoutes, rotasVisiveis, getRouteKey]);
 
     const handleShowRoutesChange = useCallback((checked) => {
@@ -217,6 +324,8 @@ export default function MapComponent() {
             setRotaSelecionada(null);
             return;
         }
+
+        setRoutesInitialized(true);
 
         const hasRoutes = rotasVisiveis.length > 0;
         setRoutesLoading(hasRoutes);
@@ -270,8 +379,9 @@ export default function MapComponent() {
 
         if (!result.isConfirmed) return;
 
+        const url = buildApiUrl("/trajeto/create");
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/trajeto/create`, {
+            const response = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -293,8 +403,10 @@ export default function MapComponent() {
                 });
             } else {
                 Swal.fire({
-                    title: "Criado!",
-                    text: "Trajeto guardado com sucesso.",
+                    title: data.reused ? "Já existia" : "Criado!",
+                    text: data.reused
+                        ? "Este trajeto já estava guardado e foi reutilizado."
+                        : "Trajeto guardado com sucesso.",
                     icon: "success",
                     confirmButtonColor: "#171717",
                 });
@@ -302,7 +414,7 @@ export default function MapComponent() {
                 loadRotas();
             }
         } catch (error) {
-            console.error("Erro na requisição:", error);
+            logNetworkError("Erro ao guardar trajeto", url, error);
             Swal.fire({
                 title: "Erro",
                 text: "Erro ao comunicar com o servidor.",
@@ -433,20 +545,39 @@ export default function MapComponent() {
                     />
                 ))}
 
-                {showRoutes && rotasVisiveis.map((trajeto, index) => {
+                {(showRoutes || routesInitialized) && rotasVisiveis.map((trajeto, index) => {
                     const coords = trajeto.pontos.map(p => [p.latitude, p.longitude]);
                     const routeKey = getRouteKey(trajeto, index);
+                    const coordsSignature = getCoordinatesSignature(coords);
+                    const cachedEntry = routeGeometryCache?.[routeKey];
+                    const cachedGeometry =
+                        cachedEntry?.signature === coordsSignature && Array.isArray(cachedEntry.geometry)
+                            ? cachedEntry.geometry
+                            : null;
+
                     return (
-                        <RoutingMachine
-                            key={`routing-${routeKey}`}
-                            rotaId={trajeto.id_trajeto}
-                            estatisticaRotaId={trajeto?.Rota?.id_rota ?? trajeto?.rota?.id_rota ?? trajeto?.id_rota}
-                            coordinates={coords}
-                            active={index === rotaSelecionada}
-                            onClick={() => setRotaSelecionada(index)}
-                            onRouteReady={() => handleRouteReady(routeKey)}
-                            onRouteRecomputeStart={() => handleRouteRecomputeStart(routeKey)}
-                        />
+                        <Fragment key={`route-wrapper-${routeKey}`}>
+                            {showRoutes && cachedGeometry && !readyRouteKeys.has(String(routeKey)) && (
+                                <Polyline
+                                    key={`cached-routing-${routeKey}`}
+                                    positions={cachedGeometry}
+                                    pathOptions={{ color: "hsl(var(--primary))", weight: 5, opacity: 0.9 }}
+                                />
+                            )}
+
+                            <RoutingMachine
+                                key={`routing-${routeKey}`}
+                                rotaId={trajeto.id_trajeto}
+                                estatisticaRotaId={trajeto?.Rota?.id_rota ?? trajeto?.rota?.id_rota ?? trajeto?.id_rota}
+                                coordinates={coords}
+                                active={index === rotaSelecionada}
+                                visible={showRoutes}
+                                onClick={() => setRotaSelecionada(index)}
+                                onRouteReady={() => handleRouteReady(routeKey)}
+                                onRouteGeometry={(geometry) => handleRouteGeometryComputed(String(routeKey), coordsSignature, geometry)}
+                                onRouteRecomputeStart={() => handleRouteRecomputeStart(routeKey)}
+                            />
+                        </Fragment>
                     );
                 })}
                 {trajetoPontos.length >= 2 && (
@@ -812,8 +943,12 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [], existingPo
         formData.append("imagePath", resolvedImage?.path || "");
         formData.append("username", username);
 
+        const url = existingPonto
+            ? buildApiUrl(`/ponto/update/${existingPonto.id_ponto}`)
+            : buildApiUrl("/ponto/create");
+
         try {
-            const response = await fetch(existingPonto ? `${process.env.NEXT_PUBLIC_API_URL}/ponto/update/${existingPonto.id_ponto}` : `${process.env.NEXT_PUBLIC_API_URL}/ponto/create`, {
+            const response = await fetch(url, {
                 method: existingPonto ? "PATCH" : "POST",
                 body: formData,
             });
@@ -837,12 +972,14 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [], existingPo
                 });
             }
         } catch (err) {
+            logNetworkError(existingPonto ? "Erro ao atualizar ponto" : "Erro ao criar ponto", url, err);
             setError("Erro ao enviar o formulário.");
         }
     };
 
     const handleCreateCategoria = async (categoriaName) => {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categoria/create`, {
+        const url = buildApiUrl("/categoria/create");
+        const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",

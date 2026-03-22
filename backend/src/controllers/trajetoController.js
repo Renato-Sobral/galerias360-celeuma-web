@@ -58,10 +58,40 @@ exports.createTrajeto = async (req, res) => {
   }
 
   try {
+    const pontosNormalizados = pontos.map((id) => Number(id));
+    if (pontosNormalizados.some((id) => !Number.isInteger(id))) {
+      return res.status(400).json({ error: 'IDs de pontos inválidos.' });
+    }
+
     const pontosData = await Ponto.findAll({ where: { id_ponto: pontos } });
 
     if (pontosData.length !== pontos.length) {
       return res.status(404).json({ error: 'Um ou mais pontos são inválidos.' });
+    }
+
+    // Evita gerar trajetos duplicados para os mesmos 2 pontos.
+    // A inversão é tratada no mapa pelo utilizador com o botão "Inverter direção".
+    if (pontosNormalizados.length === 2) {
+      const trajetosExistentes = await Trajeto.findAll({
+        include: [{ model: Ponto, through: { attributes: [] }, attributes: ['id_ponto'] }],
+      });
+
+      const conjuntoPedido = new Set(pontosNormalizados.map(String));
+      const trajetoExistente = trajetosExistentes.find((trajetoExistenteItem) => {
+        const ids = (trajetoExistenteItem.pontos || []).map((ponto) => String(ponto.id_ponto));
+        if (ids.length !== 2) return false;
+
+        return ids.every((id) => conjuntoPedido.has(id)) && conjuntoPedido.size === 2;
+      });
+
+      if (trajetoExistente) {
+        logger.info(`♻️ Trajeto já existente para os pontos [${pontosNormalizados.join(', ')}], reutilizado com ID ${trajetoExistente.id_trajeto}`);
+        return res.status(200).json({
+          message: 'Trajeto já existente. Foi reutilizado sem nova geração.',
+          trajeto: trajetoExistente,
+          reused: true,
+        });
+      }
     }
 
     const pontoInicio = pontosData[0];

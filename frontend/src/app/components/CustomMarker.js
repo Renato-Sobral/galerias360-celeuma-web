@@ -30,6 +30,7 @@ export default function CustomMarker({ id, latitude, longitude, name, image, ima
   };
 
   const previewSrc = imageUrl || (image ? `data:image/jpeg;base64,${image}` : null);
+  const hasUnsupportedMapPreview = /\.(hdr|exr)(\?|$)/i.test(String(previewSrc || ""));
 
   return (
     <Marker position={[parseFloat(latitude), parseFloat(longitude)]} icon={customIcon} eventHandlers={eventHandlers}>
@@ -51,12 +52,16 @@ export default function CustomMarker({ id, latitude, longitude, name, image, ima
           )}
 
           <div className="relative h-[148px] w-full overflow-hidden bg-muted">
-            {previewSrc ? (
+            {previewSrc && !hasUnsupportedMapPreview ? (
               <img
                 alt={name}
                 src={previewSrc}
                 className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
               />
+            ) : previewSrc && hasUnsupportedMapPreview ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-muted text-xs font-medium text-muted-foreground">
+                Preview indisponivel para HDR/EXR
+              </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
                 Sem imagem

@@ -21,7 +21,7 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL;
 
-const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"];
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif", ".hdr", ".exr"];
 const VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v"];
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".aac", ".ogg", ".flac"];
 const DOC_EXTENSIONS = [".txt", ".md", ".pdf", ".doc", ".docx", ".csv", ".json"];

@@ -6,17 +6,20 @@ import L from "leaflet";
 import "leaflet-routing-machine";
 import Swal from "sweetalert2";
 
-const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady, onRouteRecomputeStart }) => {
+const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady, onRouteGeometry, onRouteRecomputeStart }) => {
   const map = useMap();
   const controlRef = useRef(null);
   const clickLayersRef = useRef([]);
   const directionMarkersRef = useRef([]);
   const onClickRef = useRef(onClick);
   const onRouteReadyRef = useRef(onRouteReady);
+  const onRouteGeometryRef = useRef(onRouteGeometry);
   const onRouteRecomputeStartRef = useRef(onRouteRecomputeStart);
   const videoInsertedRef = useRef(false);
   const hasRouteDetailsRef = useRef(false);
   const routeReadyNotifiedRef = useRef(false);
+  const visibleRef = useRef(visible);
+  const routeCoordinatesRef = useRef([]);
 
   // Estados para controlar modal e URL do vídeo
   const [modalOpen, setModalOpen] = useState(false);
@@ -82,8 +85,16 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
   }, [onRouteReady]);
 
   useEffect(() => {
+    onRouteGeometryRef.current = onRouteGeometry;
+  }, [onRouteGeometry]);
+
+  useEffect(() => {
     onRouteRecomputeStartRef.current = onRouteRecomputeStart;
   }, [onRouteRecomputeStart]);
+
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
 
   const clearClickLayers = () => {
     clickLayersRef.current.forEach((layer) => {
@@ -152,6 +163,264 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
     }
   };
 
+  const setControlLineVisibility = (isVisible) => {
+    const line = controlRef.current?._line;
+    if (!line) return;
+
+    const style = isVisible
+      ? { color: "hsl(var(--primary))", weight: 5, opacity: 1 }
+      : { color: "hsl(var(--primary))", weight: 0, opacity: 0 };
+
+    if (typeof line.setStyle === "function") {
+      line.setStyle(style);
+    }
+
+    if (line._layers && typeof line._layers === "object") {
+      Object.values(line._layers).forEach((layer) => {
+        if (layer && typeof layer.setStyle === "function") {
+          layer.setStyle(style);
+        }
+      });
+    }
+  };
+
+  const bindClickLayer = (routeLayer) => {
+    const clickLayer = L.polyline(routeLayer, {
+      color: "transparent",
+      weight: 20,
+      opacity: 0,
+    }).addTo(map);
+    clickLayersRef.current.push(clickLayer);
+
+    clickLayer.on("click", (event) => {
+      if (!visibleRef.current) return;
+
+      if (event?.originalEvent?.stopPropagation) {
+        event.originalEvent.stopPropagation();
+      }
+      if (event) {
+        L.DomEvent.stopPropagation(event);
+      }
+
+      onClickRef.current?.();
+
+      if (!showDetails) return;
+
+      const control = controlRef.current;
+      const container = control?._container;
+      if (!container) return;
+
+      container.classList.remove("leaflet-routing-container-hide");
+
+      const isDark = document.documentElement.classList.contains("dark");
+
+      const statsRouteId = estatisticaRotaId ?? rotaId;
+      const canRegisterStats = Number.isFinite(Number(statsRouteId)) && Number(statsRouteId) > 0;
+      const key = `viewed-rota-${statsRouteId}`;
+      if (canRegisterStats && !sessionStorage.getItem(key)) {
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/estatistica/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tipo: "rota",
+            referencia_id: statsRouteId,
+          }),
+        })
+          .then(() => {
+            sessionStorage.setItem(key, "true");
+          })
+          .catch((error) => {
+            console.error("Erro ao registar visualização da rota:", error);
+          });
+      }
+
+      Object.assign(container.style, {
+        display: "block",
+        zIndex: "9999",
+        position: "fixed",
+        top: "auto",
+        right: "auto",
+        bottom: "12px",
+        left: "96px",
+        backgroundColor: isDark
+          ? "rgba(0, 0, 0, 0.95)"
+          : "rgba(255, 255, 255, 0.9)",
+        color: isDark ? "#ffffff" : "#0A0A0A",
+        padding: "10px 12px",
+        width: "min(340px, calc(100vw - 108px))",
+        borderRadius: "8px",
+        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+        maxHeight: "65vh",
+        overflowY: "auto",
+        boxSizing: "border-box",
+        fontSize: "14px",
+        lineHeight: "1.35",
+      });
+
+      const altEl = container.querySelector(".leaflet-routing-alt");
+      if (altEl) {
+        altEl.style.maxHeight = "none";
+        altEl.style.overflowY = "visible";
+      }
+
+      if (isDark) {
+        const icons = container.querySelectorAll(".leaflet-routing-icon");
+        icons.forEach((icon) => {
+          icon.style.filter = "brightness(0) invert(1)";
+        });
+      }
+
+      const styleTagId = "routing-hover-style";
+      if (!document.getElementById(styleTagId)) {
+        const style = document.createElement("style");
+        style.id = styleTagId;
+        style.innerHTML = `
+          .leaflet-routing-container tr:hover {
+            background-color: ${isDark ? "rgba(255, 255, 255, 0.1)" : "#f0f0f0"};
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
+      if (rotaId && !videoInsertedRef.current) {
+        const alt = container.querySelector(".leaflet-routing-alt");
+        if (alt && !alt.querySelector(".video-play-button")) {
+          const h3 = alt.querySelector("h3");
+
+          const actionRow = document.createElement("div");
+          actionRow.className = "route-actions-row";
+          Object.assign(actionRow.style, {
+            marginTop: "8px",
+            marginBottom: "12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            flexWrap: "wrap",
+          });
+
+          const button = document.createElement("button");
+          button.className = "video-play-button";
+          button.title = "Ver vídeo do trajeto";
+          button.setAttribute("type", "button");
+          Object.assign(button.style, {
+            fontSize: "14px",
+            color: isDark ? "#f3f3f3" : "#0A0A0A",
+            backgroundColor: "transparent",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "4px 8px",
+            borderRadius: "4px",
+            transition: "background-color 0.3s ease",
+          });
+          button.onmouseover = () => {
+            button.style.backgroundColor = isDark
+              ? "rgba(255, 255, 255, 0.2)"
+              : "rgba(0, 0, 0, 0.1)";
+          };
+          button.onmouseout = () => {
+            button.style.backgroundColor = "transparent";
+          };
+
+          const svgNS = "http://www.w3.org/2000/svg";
+          const svg = document.createElementNS(svgNS, "svg");
+          svg.setAttribute("width", "16");
+          svg.setAttribute("height", "16");
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", isDark ? "#f3f3f3" : "#0A0A0A");
+
+          const path = document.createElementNS(svgNS, "path");
+          path.setAttribute("d", "M8 5v14l11-7z");
+          svg.appendChild(path);
+
+          button.appendChild(svg);
+
+          const span = document.createElement("span");
+          span.textContent = "Ver vídeo do trajeto";
+          button.appendChild(span);
+
+          button.addEventListener("click", handlePlayClick);
+
+          const invertButton = document.createElement("button");
+          invertButton.className = "route-reverse-button";
+          invertButton.title = "Inverter direção da rota";
+          invertButton.setAttribute("type", "button");
+          Object.assign(invertButton.style, {
+            fontSize: "13px",
+            color: isDark ? "#f3f3f3" : "#0A0A0A",
+            backgroundColor: "transparent",
+            border: `1px solid ${isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.2)"}`,
+            cursor: "pointer",
+            padding: "4px 8px",
+            borderRadius: "4px",
+            transition: "background-color 0.3s ease",
+          });
+          invertButton.textContent = "Inverter direção";
+
+          invertButton.onmouseover = () => {
+            invertButton.style.backgroundColor = isDark
+              ? "rgba(255, 255, 255, 0.16)"
+              : "rgba(0, 0, 0, 0.06)";
+          };
+          invertButton.onmouseout = () => {
+            invertButton.style.backgroundColor = "transparent";
+          };
+          invertButton.addEventListener("click", () => {
+            onRouteRecomputeStartRef.current?.();
+            setIsDirectionReversed((prev) => !prev);
+          });
+
+          actionRow.appendChild(button);
+          actionRow.appendChild(invertButton);
+
+          if (h3?.parentNode) {
+            h3.parentNode.insertBefore(actionRow, h3.nextSibling);
+          } else {
+            alt.prepend(actionRow);
+          }
+
+          videoInsertedRef.current = true;
+        }
+      }
+
+      if (isDark) {
+        const elements = container.querySelectorAll(
+          "h3, a, span, div, button"
+        );
+        elements.forEach((el) => {
+          el.style.color = "#f3f3f3";
+        });
+      }
+
+      console.log("ID do trajeto clicado:", rotaId);
+    });
+  };
+
+  const applyVisibility = () => {
+    const shouldShow = Boolean(visibleRef.current);
+    setControlLineVisibility(shouldShow);
+
+    const container = controlRef.current?._container;
+    if (!shouldShow) {
+      clearClickLayers();
+      clearDirectionMarkers();
+
+      if (container) {
+        container.style.display = "none";
+        container.style.pointerEvents = "none";
+        container.classList.add("leaflet-routing-container-hide");
+      }
+      return;
+    }
+
+    if (routeCoordinatesRef.current.length > 0 && clickLayersRef.current.length === 0) {
+      addDirectionMarkers(routeCoordinatesRef.current);
+      bindClickLayer(routeCoordinatesRef.current);
+    }
+  };
+
   useEffect(() => {
     if (!map || waypointsFromSignature.length < 2) return;
 
@@ -188,223 +457,17 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
         }
 
         hasRouteDetailsRef.current = true;
-        clearClickLayers();
 
         const routeLayer = e.routes[0].coordinates;
-        addDirectionMarkers(routeLayer);
-
-        const clickLayer = L.polyline(routeLayer, {
-          color: "transparent",
-          weight: 20,
-          opacity: 0,
-        }).addTo(map);
-        clickLayersRef.current.push(clickLayer);
-
-        clickLayer.on("click", (event) => {
-          if (event?.originalEvent?.stopPropagation) {
-            event.originalEvent.stopPropagation();
-          }
-          if (event) {
-            L.DomEvent.stopPropagation(event);
-          }
-
-          onClickRef.current?.();
-
-          if (!showDetails) return;
-
-          const container = control._container;
-          if (!container) return;
-
-          // Remove a classe que esconde o conteúdo (.leaflet-routing-alt)
-          container.classList.remove("leaflet-routing-container-hide");
-
-          const isDark = document.documentElement.classList.contains("dark");
-
-          const statsRouteId = estatisticaRotaId ?? rotaId;
-          const canRegisterStats = Number.isFinite(Number(statsRouteId)) && Number(statsRouteId) > 0;
-          const key = `viewed-rota-${statsRouteId}`;
-          if (canRegisterStats && !sessionStorage.getItem(key)) {
-            fetch(`${process.env.NEXT_PUBLIC_API_URL}/estatistica/`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                tipo: "rota",
-                referencia_id: statsRouteId,
-              }),
-            })
-              .then(() => {
-                sessionStorage.setItem(key, "true");
-              })
-              .catch((error) => {
-                console.error("Erro ao registar visualização da rota:", error);
-              });
-          }
-
-          Object.assign(container.style, {
-            display: "block",
-            zIndex: "9999",
-            position: "fixed",
-            top: "auto",
-            right: "auto",
-            bottom: "12px",
-            left: "96px",
-            backgroundColor: isDark
-              ? "rgba(0, 0, 0, 0.95)"
-              : "rgba(255, 255, 255, 0.9)",
-            color: isDark ? "#ffffff" : "#0A0A0A",
-            padding: "10px 12px",
-            width: "min(340px, calc(100vw - 108px))",
-            borderRadius: "8px",
-            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
-            maxHeight: "65vh",
-            overflowY: "auto",
-            boxSizing: "border-box",
-            fontSize: "14px",
-            lineHeight: "1.35",
-          });
-
-          // Remover scroll interno do .leaflet-routing-alt para evitar scroll duplo
-          const altEl = container.querySelector(".leaflet-routing-alt");
-          if (altEl) {
-            altEl.style.maxHeight = "none";
-            altEl.style.overflowY = "visible";
-          }
-
-          if (isDark) {
-            const icons = container.querySelectorAll(".leaflet-routing-icon");
-            icons.forEach((icon) => {
-              icon.style.filter = "brightness(0) invert(1)";
-            });
-          }
-
-          const styleTagId = "routing-hover-style";
-          if (!document.getElementById(styleTagId)) {
-            const style = document.createElement("style");
-            style.id = styleTagId;
-            style.innerHTML = `
-              .leaflet-routing-container tr:hover {
-                background-color: ${isDark ? "rgba(255, 255, 255, 0.1)" : "#f0f0f0"
-              };
-              }
-            `;
-            document.head.appendChild(style);
-          }
-
-          if (rotaId && !videoInsertedRef.current) {
-            const alt = container.querySelector(".leaflet-routing-alt");
-            if (alt && !alt.querySelector(".video-play-button")) {
-              const h3 = alt.querySelector("h3");
-
-              const actionRow = document.createElement("div");
-              actionRow.className = "route-actions-row";
-              Object.assign(actionRow.style, {
-                marginTop: "8px",
-                marginBottom: "12px",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-              });
-
-              const button = document.createElement("button");
-              button.className = "video-play-button";
-              button.title = "Ver vídeo do trajeto";
-              button.setAttribute("type", "button");
-              Object.assign(button.style, {
-                fontSize: "14px",
-                color: isDark ? "#f3f3f3" : "#0A0A0A",
-                backgroundColor: "transparent",
-                border: "none",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "4px 8px",
-                borderRadius: "4px",
-                transition: "background-color 0.3s ease",
-              });
-              button.onmouseover = () => {
-                button.style.backgroundColor = isDark
-                  ? "rgba(255, 255, 255, 0.2)"
-                  : "rgba(0, 0, 0, 0.1)";
-              };
-              button.onmouseout = () => {
-                button.style.backgroundColor = "transparent";
-              };
-
-              // Ícone SVG de play
-              const svgNS = "http://www.w3.org/2000/svg";
-              const svg = document.createElementNS(svgNS, "svg");
-              svg.setAttribute("width", "16");
-              svg.setAttribute("height", "16");
-              svg.setAttribute("viewBox", "0 0 24 24");
-              svg.setAttribute("fill", isDark ? "#f3f3f3" : "#0A0A0A");
-
-              const path = document.createElementNS(svgNS, "path");
-              path.setAttribute("d", "M8 5v14l11-7z"); // triângulo play
-              svg.appendChild(path);
-
-              button.appendChild(svg);
-
-              const span = document.createElement("span");
-              span.textContent = "Ver vídeo do trajeto";
-              button.appendChild(span);
-
-              button.addEventListener("click", handlePlayClick);
-
-              const invertButton = document.createElement("button");
-              invertButton.className = "route-reverse-button";
-              invertButton.title = "Inverter direção da rota";
-              invertButton.setAttribute("type", "button");
-              Object.assign(invertButton.style, {
-                fontSize: "13px",
-                color: isDark ? "#f3f3f3" : "#0A0A0A",
-                backgroundColor: "transparent",
-                border: `1px solid ${isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.2)"}`,
-                cursor: "pointer",
-                padding: "4px 8px",
-                borderRadius: "4px",
-                transition: "background-color 0.3s ease",
-              });
-              invertButton.textContent = "Inverter direção";
-
-              invertButton.onmouseover = () => {
-                invertButton.style.backgroundColor = isDark
-                  ? "rgba(255, 255, 255, 0.16)"
-                  : "rgba(0, 0, 0, 0.06)";
-              };
-              invertButton.onmouseout = () => {
-                invertButton.style.backgroundColor = "transparent";
-              };
-              invertButton.addEventListener("click", () => {
-                onRouteRecomputeStartRef.current?.();
-                setIsDirectionReversed((prev) => !prev);
-              });
-
-              actionRow.appendChild(button);
-              actionRow.appendChild(invertButton);
-
-              if (h3?.parentNode) {
-                h3.parentNode.insertBefore(actionRow, h3.nextSibling);
-              } else {
-                alt.prepend(actionRow);
-              }
-
-              videoInsertedRef.current = true;
-            }
-          }
-
-          if (isDark) {
-            const elements = container.querySelectorAll(
-              "h3, a, span, div, button"
-            );
-            elements.forEach((el) => {
-              el.style.color = "#f3f3f3";
-            });
-          }
-
-          console.log("ID do trajeto clicado:", rotaId);
-        });
+        onRouteGeometryRef.current?.(
+          routeLayer
+            .map((point) => [Number(point?.lat), Number(point?.lng)])
+            .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
+        );
+        routeCoordinatesRef.current = routeLayer;
+        clearClickLayers();
+        clearDirectionMarkers();
+        applyVisibility();
 
         control._container.style.display = "none";
       });
@@ -446,15 +509,20 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
       }
 
       videoInsertedRef.current = false;
+      routeCoordinatesRef.current = [];
     };
   }, [map, coordinatesSignature, waypointsFromSignature, rotaId, estatisticaRotaId]);
+
+  useEffect(() => {
+    applyVisibility();
+  }, [visible]);
 
   useEffect(() => {
     if (!showDetails) return;
 
     const container = controlRef.current?._container;
     if (container) {
-      const canShow = active && hasRouteDetailsRef.current;
+      const canShow = visible && active && hasRouteDetailsRef.current;
       container.style.display = canShow ? "block" : "none";
       container.style.pointerEvents = canShow ? "auto" : "none";
       if (canShow) {
@@ -463,7 +531,7 @@ const RoutingMachine = ({ coordinates, active = false, onClick, rotaId, estatist
         container.classList.add("leaflet-routing-container-hide");
       }
     }
-  }, [active, showDetails]);
+  }, [active, showDetails, visible]);
 
   return (
     <>

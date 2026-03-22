@@ -156,7 +156,7 @@ export function fileMatchesAccept(fileName, accept = "") {
     if (token === "*/*") return true;
     if (token.endsWith("/*")) {
       const family = token.slice(0, -2);
-      if (family === "image") return [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".hdr"].includes(extension);
+      if (family === "image") return [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".hdr", ".exr"].includes(extension);
       if (family === "video") return [".mp4", ".webm", ".mov", ".avi", ".mkv"].includes(extension);
       if (family === "audio") return [".mp3", ".wav", ".ogg", ".aac"].includes(extension);
       return false;
@@ -172,7 +172,7 @@ export function fileMatchesAccept(fileName, accept = "") {
 
 export function inferPreviewKind(fileName = "", accept = "") {
   const lowerName = String(fileName).toLowerCase();
-  if (accept.includes("image/") || /\.(png|jpe?g|gif|svg|webp|bmp|hdr)$/.test(lowerName)) return "image";
+  if (accept.includes("image/") || /\.(png|jpe?g|gif|svg|webp|bmp|hdr|exr)$/.test(lowerName)) return "image";
   if (accept.includes("video/") || /\.(mp4|webm|mov|avi|mkv)$/.test(lowerName)) return "video";
   if (accept.includes("audio/") || /\.(mp3|wav|ogg|aac)$/.test(lowerName)) return "audio";
   return "file";

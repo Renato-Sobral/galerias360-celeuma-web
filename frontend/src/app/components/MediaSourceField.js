@@ -141,6 +141,23 @@ function extractDroppedFiles(event) {
   return Array.from(dt.files || []);
 }
 
+function normalizeInputAccept(accept = "") {
+  const tokens = String(accept)
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (!tokens.length) return accept;
+
+  const hasImageWildcard = tokens.some((token) => token.toLowerCase() === "image/*");
+  if (!hasImageWildcard) return accept;
+
+  const lowerSet = new Set(tokens.map((token) => token.toLowerCase()));
+  if (!lowerSet.has(".hdr")) tokens.push(".hdr");
+  if (!lowerSet.has(".exr")) tokens.push(".exr");
+  return tokens.join(",");
+}
+
 function FolderTree({ node, currentPath, onOpen, depth = 0 }) {
   if (!node) return null;
 
@@ -194,6 +211,7 @@ export default function MediaSourceField({
   const [error, setError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
   const uploadInputRef = useRef(null);
+  const inputAccept = useMemo(() => normalizeInputAccept(accept), [accept]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -412,7 +430,7 @@ export default function MediaSourceField({
                   <input
                     ref={uploadInputRef}
                     type="file"
-                    accept={accept}
+                    accept={inputAccept}
                     onChange={handleUploadFromDevice}
                     className="hidden"
                   />

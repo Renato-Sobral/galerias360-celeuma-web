@@ -36,12 +36,31 @@ exports.getHotspots = async (req, res) => {
 
 exports.updateHotspot = async (req, res) => {
   const { id } = req.params;
-  const { tipo, conteudo } = req.body;
+  const { tipo, conteudo, x, y, z } = req.body;
 
   if (!tipo || typeof tipo !== "string") {
     return res.status(400).json({
       error: "O campo 'tipo' é obrigatório e deve ser uma string.",
     });
+  }
+
+  const hasAnyPosition = x != null || y != null || z != null;
+  if (hasAnyPosition) {
+    if (x == null || y == null || z == null) {
+      return res.status(400).json({
+        error: "Para atualizar posição é necessário enviar x, y e z.",
+      });
+    }
+
+    const nx = Number(x);
+    const ny = Number(y);
+    const nz = Number(z);
+
+    if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) {
+      return res.status(400).json({
+        error: "Os campos x, y e z devem ser números válidos.",
+      });
+    }
   }
 
   try {
@@ -53,9 +72,14 @@ exports.updateHotspot = async (req, res) => {
 
     hotspot.tipo = tipo;
     hotspot.conteudo = conteudo;
+    if (hasAnyPosition) {
+      hotspot.x = Number(x);
+      hotspot.y = Number(y);
+      hotspot.z = Number(z);
+    }
     await hotspot.save();
 
-    const logMessage = `Hotspot ID ${id} atualizado. Tipo: ${tipo}, Conteúdo: ${conteudo}`;
+    const logMessage = `Hotspot ID ${id} atualizado. Tipo: ${tipo}, Conteúdo: ${conteudo}, Posição: (${hotspot.x}, ${hotspot.y}, ${hotspot.z})`;
     logger.info(logMessage);
 
     return res.status(200).json({

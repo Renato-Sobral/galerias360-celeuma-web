@@ -41,7 +41,8 @@ const getAllowedOrigins = () => {
 
 const allowedOrigins = getAllowedOrigins();
 const isDev = process.env.NODE_ENV !== "production";
-const devLocalOriginRegex = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
+const devLocalOriginRegex = /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/;
+const devPrivateOriginRegex = /^https?:\/\/(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}):\d+$/;
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -51,7 +52,7 @@ const corsOptions = {
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    if (isDev && devLocalOriginRegex.test(origin)) {
+    if (isDev && (devLocalOriginRegex.test(origin) || devPrivateOriginRegex.test(origin))) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked origin: ${origin}`));
@@ -97,8 +98,9 @@ io.on("connection", (socket) => {
 });
 
 async function bootstrap() {
-  await sequelize.sync({ alter: true });
-  console.log("✅ Tabelas sincronizadas com sucesso!");
+  const shouldAlterSchema = process.env.SEQUELIZE_SYNC_ALTER === "true";
+  await sequelize.sync(shouldAlterSchema ? { alter: true } : undefined);
+  console.log(`✅ Tabelas sincronizadas com sucesso! (alter=${shouldAlterSchema})`);
 
   await seedDefaultThemePresets();
 

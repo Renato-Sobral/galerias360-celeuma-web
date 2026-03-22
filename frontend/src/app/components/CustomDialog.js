@@ -12,6 +12,15 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -25,10 +34,13 @@ export default function CustomDialog({
   cancelLabel = "Cancelar",
   open,
   onOpenChange,
+  overlayClassName,
   contentClassName,
   headerClassName,
   bodyClassName,
   footerClassName,
+  nonModal = false,
+  closeOnInteractOutside = true,
 }) {
   // 🔧 Corrigir pointer-events: none após fechar
   useEffect(() => {
@@ -50,11 +62,47 @@ export default function CustomDialog({
     return () => observer.disconnect();
   }, []);
 
+  if (nonModal) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange} modal={false}>
+        {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
+
+        <DialogContent
+          overlayClassName={overlayClassName}
+          className={cn("max-h-[90vh] overflow-hidden", contentClassName)}
+          onInteractOutside={(event) => {
+            if (!closeOnInteractOutside) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (!closeOnInteractOutside) event.preventDefault();
+          }}
+        >
+          <DialogHeader className={headerClassName}>
+            <DialogTitle>{title}</DialogTitle>
+            {description && <DialogDescription>{description}</DialogDescription>}
+          </DialogHeader>
+
+          {children && <div className={cn("mt-2 overflow-y-auto", bodyClassName)}>{children}</div>}
+
+          <DialogFooter className={footerClassName}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange?.(false)}>
+              {cancelLabel}
+            </Button>
+            <Button type="button" onClick={onConfirm}>{confirmLabel}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       {trigger && <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>}
 
-      <AlertDialogContent className={cn("max-h-[90vh] overflow-hidden", contentClassName)}>
+      <AlertDialogContent
+        overlayClassName={overlayClassName}
+        className={cn("max-h-[90vh] overflow-hidden", contentClassName)}
+      >
         <AlertDialogHeader className={headerClassName}>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description && <AlertDialogDescription>{description}</AlertDialogDescription>}

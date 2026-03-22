@@ -35,7 +35,7 @@ export default function EditorPage() {
         const ext = selectedFile.name.split(".").pop().toLowerCase();
         if (["gltf", "glb", "ply", "splat"].includes(ext)) {
           setFileType("3d");
-        } else if (["jpg", "jpeg", "png", "hdr"].includes(ext)) {
+        } else if (["jpg", "jpeg", "png", "hdr", "exr"].includes(ext)) {
           setFileType("360");
         } else {
           setFile(null);
@@ -67,7 +67,7 @@ export default function EditorPage() {
           <div style={{ maxWidth: "640px", marginBottom: "16px" }}>
             <MediaSourceField
               label="Ficheiro para editar"
-              accept="image/*,.hdr,.gltf,.glb,.ply,.splat"
+              accept="image/*,.hdr,.exr,.gltf,.glb,.ply,.splat"
               selection={selection}
               onChange={setSelection}
               destinationPath="editor"
