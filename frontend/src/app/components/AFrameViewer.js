@@ -9,6 +9,7 @@ import DropdownSingle from "./select";
 import MediaSourceField from "./MediaSourceField";
 import Swal from "sweetalert2";
 import { createLibrarySelection, resolveMediaSelection, resolveUploadsUrl, relativePathFromUploadsUrl } from "../lib/media-library";
+import { ensurePanoramaDomeComponent } from "../lib/aframe-panorama-dome";
 
 const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigateOnHotspot = false }) => {
   const API_BASE =
@@ -27,10 +28,19 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const NAV_BACK_VALUE = "nav:back";
   const HOTSPOT_META_PREFIX = "hsmeta:";
   const HOTSPOT_SCALE_MIN = 0.2;
-  const HOTSPOT_SCALE_MAX = 20;
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
   const DEFAULT_PANORAMA_DOME_THETA_START_DEG = 0;
   const DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG = 90;
+  const DEFAULT_DOME_LIGHT_ROTATION_DEG = 0;
+  const DEFAULT_DOME_LIGHT_STRENGTH = 1;
+  const DEFAULT_DOME_LIGHT_WORLD_OPACITY = 0;
+  const DEFAULT_DOME_LIGHT_BLUR = 0.5;
+  const DEFAULT_DOME_ROTATION_Y = -130;
+  const DEFAULT_DOME_LIGHT_COLOR = "#ffffff";
+  const DEFAULT_DOME_LIGHT_DISTANCE = 2200;
+  const DEFAULT_DOME_SHADOW_BIAS = -0.00015;
+  const DOME_LIGHT_RADIUS = 45;
+  const DOME_LIGHT_HEIGHT = 35;
 
   const encodeDestinationPointContent = (targetPontoId) => `${NAV_POINT_PREFIX}${targetPontoId}`;
   const encodeDestinationFileContent = (targetFilePath) => `${NAV_FILE_PREFIX}${targetFilePath}`;
@@ -41,7 +51,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       value: String(rawValue || ""),
       view: String(viewPath || "").replace(/^\/+/, ""),
       scale: Number.isFinite(Number(scale))
-        ? Math.min(HOTSPOT_SCALE_MAX, Math.max(HOTSPOT_SCALE_MIN, Number(scale)))
+        ? Math.max(HOTSPOT_SCALE_MIN, Number(scale))
         : 1,
       rotYaw: Number.isFinite(Number(rotYaw)) ? Number(rotYaw) : 0,
       rotPitch: Number.isFinite(Number(rotPitch)) ? Number(rotPitch) : 0,
@@ -68,7 +78,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         value: String(parsed?.value || ""),
         view: String(parsed?.view || "").replace(/^\/+/, ""),
         scale: Number.isFinite(Number(parsed?.scale))
-          ? Math.min(HOTSPOT_SCALE_MAX, Math.max(HOTSPOT_SCALE_MIN, Number(parsed.scale)))
+          ? Math.max(HOTSPOT_SCALE_MIN, Number(parsed.scale))
           : 1,
         rotYaw: Number.isFinite(Number(parsed?.rotYaw)) ? Number(parsed.rotYaw) : 0,
         rotPitch: Number.isFinite(Number(parsed?.rotPitch)) ? Number(parsed.rotPitch) : 0,
@@ -114,6 +124,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const sceneRef = useRef(null);
+  const domeEntityRef = useRef(null);
+  const ambientLightRef = useRef(null);
+  const pointLightRef = useRef(null);
+  const [domeComponentReady, setDomeComponentReady] = useState(false);
   const [hotspots, setHotspots] = useState([]);
   const clickEventRef = useRef(null);
   const [selectedHotspot, setSelectedHotspot] = useState(null);
@@ -129,6 +143,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [domeThetaStartDeg, setDomeThetaStartDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_START_DEG);
   const [domeThetaLengthDeg, setDomeThetaLengthDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG);
+  const [domeVerticalOffset, setDomeVerticalOffset] = useState(0);
+  const [domeRotationY, setDomeRotationY] = useState(DEFAULT_DOME_ROTATION_Y);
+  const [domeLightRotationDeg, setDomeLightRotationDeg] = useState(DEFAULT_DOME_LIGHT_ROTATION_DEG);
+  const [domeLightStrength, setDomeLightStrength] = useState(DEFAULT_DOME_LIGHT_STRENGTH);
+  const [domeLightWorldOpacity, setDomeLightWorldOpacity] = useState(DEFAULT_DOME_LIGHT_WORLD_OPACITY);
+  const [domeLightBlur, setDomeLightBlur] = useState(DEFAULT_DOME_LIGHT_BLUR);
+  const [domeLightColor, setDomeLightColor] = useState(DEFAULT_DOME_LIGHT_COLOR);
+  const [domeLightDistance, setDomeLightDistance] = useState(DEFAULT_DOME_LIGHT_DISTANCE);
+  const [domeShadowBias, setDomeShadowBias] = useState(DEFAULT_DOME_SHADOW_BIAS);
   const [editRadius, setEditRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [editScale, setEditScale] = useState(1);
   const [editPontoDestino, setEditPontoDestino] = useState("");
@@ -144,6 +167,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [navigationPhase, setNavigationPhase] = useState("idle");
   const [navigationProgress, setNavigationProgress] = useState(0);
   const [domeSettingsByView, setDomeSettingsByView] = useState({});
+  const [domeSettingsLoaded, setDomeSettingsLoaded] = useState(false);
   const navigationTransitionTimerRef = useRef(null);
   const navigationProgressIntervalRef = useRef(null);
   const NAVIGATION_FADE_MS = 220;
@@ -156,35 +180,66 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const videoRef = useRef(null);
   const [videoReady, setVideoReady] = useState(false);
   const [environmentLoadError, setEnvironmentLoadError] = useState("");
-  const hdrSphereRef = useRef(null);
+
   const [editingItem, setEditingItem] = useState(null);
-  const currentViewPath = useMemo(() => relativePathFromUploadsUrl(activeEnvironment || ""), [activeEnvironment]);
+  const normalizeDomeUrlKey = (value) => String(value || "").split("?")[0].split("#")[0];
+  const currentViewPath = useMemo(() => {
+    if (parsedEnvironment?.mode === "url") {
+      return relativePathFromUploadsUrl(parsedEnvironment.url || "");
+    }
+    return relativePathFromUploadsUrl(activeEnvironment || "");
+  }, [activeEnvironment, parsedEnvironment?.mode, parsedEnvironment?.url]);
+  const domeSettingsStorageKey = useMemo(
+    () => `galerias360:domeSettingsByView:${String(activePontoId || pontoId || "")}`,
+    [activePontoId, pontoId]
+  );
   const currentDomeViewKey = useMemo(() => {
     if (currentViewPath) return `path:${currentViewPath}`;
-    if (parsedEnvironment?.mode === "url" && parsedEnvironment?.url) return `url:${parsedEnvironment.url}`;
+    if (parsedEnvironment?.mode === "url" && parsedEnvironment?.url) {
+      const normalizedUrl = normalizeDomeUrlKey(parsedEnvironment.url);
+      // Blob URLs are ephemeral; scope them to point to keep settings stable while editing.
+      if (normalizedUrl.startsWith("blob:")) {
+        return `blob:${String(activePontoId || pontoId || "default")}`;
+      }
+      return `url:${normalizedUrl}`;
+    }
     if (parsedEnvironment?.mode === "base64") return `base64:${String(activePontoId || pontoId || "default")}`;
     return `env:${String(activeEnvironment || "default")}`;
   }, [activeEnvironment, activePontoId, currentViewPath, parsedEnvironment?.mode, parsedEnvironment?.url, pontoId]);
-  const domeThetaStartRad = useMemo(() => (domeThetaStartDeg * Math.PI) / 180, [domeThetaStartDeg]);
-  const domeThetaLengthRad = useMemo(() => (domeThetaLengthDeg * Math.PI) / 180, [domeThetaLengthDeg]);
-  const domeThetaEndRad = useMemo(() => {
-    const end = domeThetaStartRad + domeThetaLengthRad;
-    return Math.min(Math.PI, Math.max(0, end));
-  }, [domeThetaLengthRad, domeThetaStartRad]);
-  const domeFloorY = useMemo(() => domeRadius * Math.cos(domeThetaEndRad), [domeRadius, domeThetaEndRad]);
-  const domeFloorRadius = useMemo(() => Math.max(40, domeRadius * Math.sin(domeThetaEndRad)), [domeRadius, domeThetaEndRad]);
   const imageSkySrc = parsedEnvironment?.mode === 'base64'
     ? `data:${parsedEnvironment?.mime};base64,${parsedEnvironment?.raw}`
     : parsedEnvironment?.url;
-  const domeFloorMaterial = useMemo(() => {
-    if (!isHdrOrExrEnvironment && parsedEnvironment?.mime?.startsWith("image/") && imageSkySrc) {
-      return `shader: flat; src: ${imageSkySrc}; side: double; transparent: true; opacity: 0.98`;
+
+  useEffect(() => {
+    setDomeSettingsLoaded(false);
+    try {
+      const raw = localStorage.getItem(domeSettingsStorageKey);
+      if (!raw) {
+        setDomeSettingsByView({});
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setDomeSettingsByView({});
+        return;
+      }
+      setDomeSettingsByView(parsed);
+    } catch {
+      // ignore corrupted storage
+      setDomeSettingsByView({});
+    } finally {
+      setDomeSettingsLoaded(true);
     }
-    if (parsedEnvironment?.mime?.startsWith("video/") && videoReady) {
-      return "shader: flat; src: #environment; side: double; transparent: true; opacity: 0.98";
+  }, [domeSettingsStorageKey]);
+
+  useEffect(() => {
+    if (!domeSettingsLoaded) return;
+    try {
+      localStorage.setItem(domeSettingsStorageKey, JSON.stringify(domeSettingsByView || {}));
+    } catch {
+      // ignore quota errors
     }
-    return "side: double; transparent: true; opacity: 0.92; roughness: 1; metalness: 0";
-  }, [imageSkySrc, isHdrOrExrEnvironment, parsedEnvironment?.mime, videoReady]);
+  }, [domeSettingsByView, domeSettingsLoaded, domeSettingsStorageKey]);
 
   const handleOpenEditor = (item) => setEditingItem(item);
   const handleCloseEditor = () => setEditingItem(null);
@@ -217,14 +272,27 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const positionSliderMin = -domeRadius;
   const positionSliderMax = domeRadius;
+  const DOME_VERTICAL_OFFSET_MIN = -2000;
+  const DOME_VERTICAL_OFFSET_MAX = 2000;
+
+  const lightRotationRad = useMemo(
+    () => (Number(domeLightRotationDeg) * Math.PI) / 180,
+    [domeLightRotationDeg]
+  );
+  const pointLightPosition = useMemo(() => {
+    const x = Math.sin(lightRotationRad) * DOME_LIGHT_RADIUS;
+    const z = Math.cos(lightRotationRad) * DOME_LIGHT_RADIUS;
+    return `${x.toFixed(2)} ${DOME_LIGHT_HEIGHT.toFixed(2)} ${z.toFixed(2)}`;
+  }, [lightRotationRad]);
 
   const normalizeDomeSettings = (settings) => {
     const baseRadius = Number(settings?.radius);
     const baseThetaStart = Number(settings?.thetaStartDeg);
     const baseThetaLength = Number(settings?.thetaLengthDeg);
+    const baseVerticalOffset = Number(settings?.verticalOffset);
 
     const radius = Number.isFinite(baseRadius)
-      ? clamp(baseRadius, 300, 1400)
+      ? Math.max(50, baseRadius)
       : DEFAULT_PANORAMA_DOME_RADIUS;
     const thetaStartDeg = Number.isFinite(baseThetaStart)
       ? clamp(baseThetaStart, 0, 160)
@@ -233,14 +301,89 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       ? clamp(baseThetaLength, 20, 180 - thetaStartDeg)
       : clamp(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG, 20, 180 - thetaStartDeg);
 
-    return { radius, thetaStartDeg, thetaLengthDeg };
+    const verticalOffset = Number.isFinite(baseVerticalOffset)
+      ? baseVerticalOffset
+      : 0;
+
+    const baseRotationY = Number(settings?.rotationY);
+    const rotationY = Number.isFinite(baseRotationY)
+      ? clamp(baseRotationY, -360, 360)
+      : DEFAULT_DOME_ROTATION_Y;
+
+    const baseLightRotationDeg = Number(settings?.lightRotationDeg);
+    const baseLightStrength = Number(settings?.lightStrength);
+    const baseLightWorldOpacity = Number(settings?.lightWorldOpacity);
+    const baseLightBlur = Number(settings?.lightBlur);
+    const baseLightDistance = Number(settings?.lightDistance);
+    const baseShadowBias = Number(settings?.shadowBias);
+    const rawLightColor = String(settings?.lightColor || "").trim();
+
+    const lightRotationDeg = Number.isFinite(baseLightRotationDeg)
+      ? ((baseLightRotationDeg % 360) + 360) % 360
+      : DEFAULT_DOME_LIGHT_ROTATION_DEG;
+    const lightStrength = Number.isFinite(baseLightStrength)
+      ? Math.max(0, baseLightStrength)
+      : DEFAULT_DOME_LIGHT_STRENGTH;
+    const lightWorldOpacity = Number.isFinite(baseLightWorldOpacity)
+      ? Math.max(0, baseLightWorldOpacity)
+      : DEFAULT_DOME_LIGHT_WORLD_OPACITY;
+    const lightBlur = Number.isFinite(baseLightBlur)
+      ? Math.max(0, baseLightBlur)
+      : DEFAULT_DOME_LIGHT_BLUR;
+    const lightDistance = Number.isFinite(baseLightDistance)
+      ? Math.max(1, baseLightDistance)
+      : DEFAULT_DOME_LIGHT_DISTANCE;
+    const shadowBias = Number.isFinite(baseShadowBias)
+      ? clamp(baseShadowBias, -0.01, 0.01)
+      : DEFAULT_DOME_SHADOW_BIAS;
+    const lightColor = /^#[0-9a-fA-F]{6}$/.test(rawLightColor)
+      ? rawLightColor
+      : DEFAULT_DOME_LIGHT_COLOR;
+
+    return {
+      radius,
+      thetaStartDeg,
+      thetaLengthDeg,
+      verticalOffset,
+      rotationY,
+      lightRotationDeg,
+      lightStrength,
+      lightWorldOpacity,
+      lightBlur,
+      lightColor,
+      lightDistance,
+      shadowBias,
+    };
   };
 
   const persistDomeSettingsForView = (nextSettings) => {
-    const normalized = normalizeDomeSettings(nextSettings);
+    const normalized = normalizeDomeSettings({
+      radius: domeRadius,
+      thetaStartDeg: domeThetaStartDeg,
+      thetaLengthDeg: domeThetaLengthDeg,
+      verticalOffset: domeVerticalOffset,
+      rotationY: domeRotationY,
+      lightRotationDeg: domeLightRotationDeg,
+      lightStrength: domeLightStrength,
+      lightWorldOpacity: domeLightWorldOpacity,
+      lightBlur: domeLightBlur,
+      lightColor: domeLightColor,
+      lightDistance: domeLightDistance,
+      shadowBias: domeShadowBias,
+      ...(nextSettings || {}),
+    });
     setDomeRadius(normalized.radius);
     setDomeThetaStartDeg(normalized.thetaStartDeg);
     setDomeThetaLengthDeg(normalized.thetaLengthDeg);
+    setDomeVerticalOffset(normalized.verticalOffset);
+    setDomeRotationY(normalized.rotationY);
+    setDomeLightRotationDeg(normalized.lightRotationDeg);
+    setDomeLightStrength(normalized.lightStrength);
+    setDomeLightWorldOpacity(normalized.lightWorldOpacity);
+    setDomeLightBlur(normalized.lightBlur);
+    setDomeLightColor(normalized.lightColor);
+    setDomeLightDistance(normalized.lightDistance);
+    setDomeShadowBias(normalized.shadowBias);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
     setDomeSettingsByView((prev) => ({
       ...prev,
@@ -254,6 +397,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setDomeRadius(normalized.radius);
     setDomeThetaStartDeg(normalized.thetaStartDeg);
     setDomeThetaLengthDeg(normalized.thetaLengthDeg);
+    setDomeVerticalOffset(normalized.verticalOffset);
+    setDomeRotationY(normalized.rotationY);
+    setDomeLightRotationDeg(normalized.lightRotationDeg);
+    setDomeLightStrength(normalized.lightStrength);
+    setDomeLightWorldOpacity(normalized.lightWorldOpacity);
+    setDomeLightBlur(normalized.lightBlur);
+    setDomeLightColor(normalized.lightColor);
+    setDomeLightDistance(normalized.lightDistance);
+    setDomeShadowBias(normalized.shadowBias);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
   }, [currentDomeViewKey, domeSettingsByView]);
 
@@ -304,6 +456,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       radius: domeRadius,
       thetaStartDeg: safeStart,
       thetaLengthDeg: Math.min(domeThetaLengthDeg, 180 - safeStart),
+      verticalOffset: domeVerticalOffset,
+      lightRotationDeg: domeLightRotationDeg,
+      lightStrength: domeLightStrength,
+      lightWorldOpacity: domeLightWorldOpacity,
+      lightBlur: domeLightBlur,
     });
   };
 
@@ -312,6 +469,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       radius: domeRadius,
       thetaStartDeg: domeThetaStartDeg,
       thetaLengthDeg: clamp(Number(nextLength) || 20, 20, 180 - domeThetaStartDeg),
+      verticalOffset: domeVerticalOffset,
+      lightRotationDeg: domeLightRotationDeg,
+      lightStrength: domeLightStrength,
+      lightWorldOpacity: domeLightWorldOpacity,
+      lightBlur: domeLightBlur,
     });
   };
 
@@ -390,19 +552,52 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const AFRAME = window.AFRAME;
     const THREE = window.THREE;
     if (!AFRAME || !THREE) return;
-    if (AFRAME.components["face-camera"]) return;
 
-    AFRAME.registerComponent("face-camera", {
-      init() {
-        this.cameraWorldPosition = new THREE.Vector3();
-      },
-      tick() {
-        const scene = this.el.sceneEl;
-        if (!scene?.camera) return;
-        scene.camera.getWorldPosition(this.cameraWorldPosition);
-        this.el.object3D.lookAt(this.cameraWorldPosition);
-      },
-    });
+    if (!AFRAME.components["face-camera"]) {
+      AFRAME.registerComponent("face-camera", {
+        init() {
+          this.cameraWorldPosition = new THREE.Vector3();
+        },
+        tick() {
+          const scene = this.el.sceneEl;
+          if (!scene?.camera) return;
+          scene.camera.getWorldPosition(this.cameraWorldPosition);
+          this.el.object3D.lookAt(this.cameraWorldPosition);
+        },
+      });
+    }
+
+    if (!AFRAME.components["center-model-pivot"]) {
+      AFRAME.registerComponent("center-model-pivot", {
+        init() {
+          this.boundingBox = new THREE.Box3();
+          this.center = new THREE.Vector3();
+          this.appliedOffset = new THREE.Vector3();
+          this.recenter = this.recenter.bind(this);
+          this.el.addEventListener("model-loaded", this.recenter);
+          this.recenter();
+        },
+        recenter() {
+          const mesh = this.el.getObject3D("mesh");
+          if (!mesh) return;
+
+          // Remove previous offset before recalculating to avoid cumulative drift.
+          mesh.position.add(this.appliedOffset);
+          this.boundingBox.setFromObject(mesh);
+          if (this.boundingBox.isEmpty()) {
+            this.appliedOffset.set(0, 0, 0);
+            return;
+          }
+
+          this.boundingBox.getCenter(this.center);
+          this.appliedOffset.copy(this.center);
+          mesh.position.sub(this.center);
+        },
+        remove() {
+          this.el.removeEventListener("model-loaded", this.recenter);
+        },
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -555,20 +750,132 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return /\.(hdr|exr)(\?|$)/i.test(String(url || ''));
   }
 
-  function disposeHdrSphere() {
-    const mesh = hdrSphereRef.current;
-    if (!mesh) return;
+  useEffect(() => {
+    let mounted = true;
+    ensurePanoramaDomeComponent()
+      .catch(() => {
+        // ignore; errors are surfaced via events when the entity tries to load
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setDomeComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
+      });
 
-    if (mesh.parent) mesh.parent.remove(mesh);
-    if (mesh.material?.map) mesh.material.map.dispose();
-    if (Array.isArray(mesh.material)) {
-      mesh.material.forEach((material) => material?.dispose?.());
-    } else {
-      mesh.material?.dispose?.();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const sceneEl = sceneRef.current;
+    if (!sceneEl) return;
+    let shadowRefreshInterval = null;
+
+    const apply = () => {
+      try {
+        const renderer = sceneEl.renderer;
+        if (renderer) {
+          renderer.shadowMap.enabled = true;
+          renderer.shadowMap.type = window.THREE?.VSMShadowMap ?? window.THREE?.PCFSoftShadowMap ?? renderer.shadowMap.type;
+          renderer.shadowMap.needsUpdate = true;
+          renderer.setClearColor?.(0x000000, 1);
+        }
+
+        sceneEl.object3D.traverse((obj) => {
+          if (obj?.isLight) {
+            obj.castShadow = true;
+            if (obj.shadow) {
+              obj.shadow.mapSize?.set?.(2048, 2048);
+              obj.shadow.bias = domeShadowBias;
+            }
+          }
+          if (obj?.isMesh) {
+            // Respect explicit A-Frame shadow config on each entity.
+            // This avoids invisible helper planes casting square shadows.
+            const shadowConfig = obj.el?.getAttribute?.("shadow");
+            if (shadowConfig && typeof shadowConfig === "object") {
+              obj.castShadow = shadowConfig.cast !== false;
+              obj.receiveShadow = shadowConfig.receive !== false;
+            } else if (obj.el) {
+              // Default for regular scene entities when not configured.
+              obj.castShadow = true;
+              obj.receiveShadow = true;
+            }
+          }
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    sceneEl.addEventListener("renderstart", apply);
+    sceneEl.addEventListener("loaded", apply);
+    apply();
+    // Some meshes (e.g. glTF) arrive asynchronously; keep shadow flags in sync.
+    shadowRefreshInterval = window.setInterval(apply, 1000);
+    return () => {
+      if (shadowRefreshInterval) {
+        window.clearInterval(shadowRefreshInterval);
+      }
+      sceneEl.removeEventListener("renderstart", apply);
+      sceneEl.removeEventListener("loaded", apply);
+    };
+  }, [domeShadowBias]);
+
+  useEffect(() => {
+    const ambientLight = ambientLightRef.current?.getObject3D?.("light");
+    if (ambientLight) {
+      ambientLight.intensity = Math.max(0, domeLightWorldOpacity);
     }
-    mesh.geometry?.dispose?.();
-    hdrSphereRef.current = null;
-  }
+
+    const pointLight = pointLightRef.current?.getObject3D?.("light");
+    if (pointLight) {
+      pointLight.intensity = Math.max(0, domeLightStrength);
+      pointLight.distance = domeLightDistance;
+      pointLight.color?.set?.(domeLightColor);
+      pointLight.castShadow = true;
+
+      // Also update A-Frame light component attrs to keep runtime behavior in sync.
+      pointLightRef.current?.setAttribute?.("light", "intensity", Math.max(0, domeLightStrength));
+      pointLightRef.current?.setAttribute?.("light", "distance", domeLightDistance);
+      pointLightRef.current?.setAttribute?.("light", "color", domeLightColor);
+
+      if (pointLight.shadow) {
+        pointLight.shadow.bias = domeShadowBias;
+        pointLight.shadow.mapSize?.set?.(2048, 2048);
+
+        // For PCF/PCFSoft this controls softness; with VSM we also tune blurSamples.
+        pointLight.shadow.radius = Math.max(0, domeLightBlur * 12);
+        if (typeof pointLight.shadow.blurSamples === "number") {
+          pointLight.shadow.blurSamples = Math.max(1, Math.round(4 + domeLightBlur * 20));
+        }
+        pointLight.shadow.needsUpdate = true;
+      }
+    }
+
+    const renderer = sceneRef.current?.renderer;
+    if (renderer?.shadowMap) {
+      renderer.shadowMap.needsUpdate = true;
+    }
+  }, [domeLightBlur, domeLightColor, domeLightDistance, domeLightStrength, domeLightWorldOpacity, domeShadowBias, pointLightPosition]);
+
+  useEffect(() => {
+    const el = domeEntityRef.current;
+    if (!el) return;
+
+    const onError = (evt) => {
+      const message = evt?.detail?.message;
+      setEnvironmentLoadError(message || "Não foi possível carregar o dome 360.");
+    };
+    const onLoaded = () => setEnvironmentLoadError("");
+
+    el.addEventListener("panorama-dome-error", onError);
+    el.addEventListener("panorama-dome-loaded", onLoaded);
+    return () => {
+      el.removeEventListener("panorama-dome-error", onError);
+      el.removeEventListener("panorama-dome-loaded", onLoaded);
+    };
+  }, [activeEnvironment]);
 
   function parseEnvironment(value) {
     if (!value) return null;
@@ -586,78 +893,38 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   }
   /*END Environment file handler*/
 
+  const panoramaKind = useMemo(() => {
+    if (isHdrOrExrEnvironment) return "hdr";
+    if (parsedEnvironment?.mime?.startsWith("video/")) return "video";
+    if (parsedEnvironment?.mime?.startsWith("image/")) return "image";
+    return "";
+  }, [isHdrOrExrEnvironment, parsedEnvironment?.mime]);
+
+  const panoramaSrc = useMemo(() => {
+    if (panoramaKind === "hdr") return parsedEnvironment?.url || "";
+    if (panoramaKind === "video") return videoReady ? "#environment" : "";
+    if (panoramaKind === "image") return imageSkySrc || "";
+    return "";
+  }, [imageSkySrc, panoramaKind, parsedEnvironment?.url, videoReady]);
+
   useEffect(() => {
-    let cancelled = false;
+    const el = domeEntityRef.current;
+    if (!el) return;
+    if (!panoramaSrc || !panoramaKind) return;
+    if (!domeComponentReady) return;
 
-    const loadHdrOrExrEnvironment = async () => {
-      const sceneEl = sceneRef.current;
-      if (!sceneEl) return;
-
-      setEnvironmentLoadError("");
-
-      if (!isHdrOrExrEnvironment || !parsedEnvironment?.url) {
-        disposeHdrSphere();
-        return;
-      }
-
-      try {
-        const THREE = await import("three");
-        const lowerUrl = String(parsedEnvironment.url).toLowerCase();
-        const isExr = /\.exr(\?|$)/.test(lowerUrl);
-        const loaderModule = isExr
-          ? await import("three/examples/jsm/loaders/EXRLoader.js")
-          : await import("three/examples/jsm/loaders/RGBELoader.js");
-        const Loader = isExr ? loaderModule.EXRLoader : loaderModule.RGBELoader;
-        const loader = new Loader();
-
-        loader.load(
-          parsedEnvironment.url,
-          (texture) => {
-            if (cancelled) {
-              texture.dispose();
-              return;
-            }
-
-            disposeHdrSphere();
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-
-            const geometry = new THREE.SphereGeometry(
-              domeRadius,
-              64,
-              32,
-              0,
-              Math.PI * 2,
-              domeThetaStartRad,
-              domeThetaLengthRad
-            );
-            geometry.scale(-1, 1, 1);
-            const material = new THREE.MeshBasicMaterial({ map: texture });
-            const mesh = new THREE.Mesh(geometry, material);
-
-            sceneEl.object3D.add(mesh);
-            hdrSphereRef.current = mesh;
-          },
-          undefined,
-          (error) => {
-            if (cancelled) return;
-            console.error("Erro ao carregar ambiente HDR/EXR:", error);
-            setEnvironmentLoadError("Não foi possível carregar o ficheiro HDR/EXR neste viewer.");
-          }
-        );
-      } catch (error) {
-        if (cancelled) return;
-        console.error("Erro ao inicializar loader HDR/EXR:", error);
-        setEnvironmentLoadError("Não foi possível carregar o ficheiro HDR/EXR neste viewer.");
-      }
-    };
-
-    loadHdrOrExrEnvironment();
-
-    return () => {
-      cancelled = true;
-      disposeHdrSphere();
-    };
-  }, [domeRadius, domeThetaLengthRad, domeThetaStartRad, isHdrOrExrEnvironment, parsedEnvironment?.url]);
+    el.setAttribute("panorama-dome", {
+      kind: panoramaKind,
+      src: panoramaSrc,
+      radius: domeRadius,
+      rotationY: domeRotationY,
+      opacity: 1,
+      shadowOpacity: Math.max(0.05, Math.min(1, 0.1 + domeLightStrength * 0.18)),
+      model: "/models/Dome.fbx",
+      recenter: false,
+      alignY: "center",
+    });
+  }, [domeComponentReady, domeLightStrength, domeRadius, domeRotationY, panoramaKind, panoramaSrc]);
 
   useEffect(() => {
     const el = document.querySelector('a-text');
@@ -667,7 +934,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   }, []);
 
   const defaultProps = {
-    position: { x: 0, y: 0, z: -5 },
+    position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0, z: 0 },
     scale: { x: 1, y: 1, z: 1 },
     brightness: 1,
@@ -678,7 +945,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
   const tipoToAFrame = {
     texto: (conteudo) => (
-      <a-entity face-camera>
+      <a-entity>
         <a-text
           value={String(conteudo || "Texto")}
           color="white"
@@ -688,14 +955,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           align="center"
           baseline="center"
           side="double"
-          align="center"
           position="0 10 0"
         />
       </a-entity>
     ),
 
     imagem: (conteudo) => (
-      <a-entity face-camera>
+      <a-entity>
         <a-ring radius-inner="5" radius-outer="7" color="#06b6d4" material="side: double" />
         <a-text value={conteudo ? "Imagem" : "Imagem?"} color="white" width="70" align="center" position="0 9 0" />
       </a-entity>
@@ -707,31 +973,12 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         position={`${defaultProps.position.x} ${defaultProps.position.y} ${defaultProps.position.z}`}
         rotation={`${defaultProps.rotation.x} ${defaultProps.rotation.y} ${defaultProps.rotation.z}`}
         scale={`${defaultProps.scale.x} ${defaultProps.scale.y} ${defaultProps.scale.z}`}
-        look-at="[camera]"
-        style={{ position: "relative" }}
-      >
-        <button
-          onClick={() => handleOpenEditor(conteudo)}
-          style={{
-            position: "absolute",
-            bottom: 10,
-            right: 10,
-            background: "rgba(0,0,0,0.7)",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            padding: "6px 10px",
-            cursor: "pointer",
-            zIndex: 2000,
-          }}
-        >
-          ⚙️
-        </button>
-      </a-entity>
+        center-model-pivot
+      />
     ),
 
     audio: (conteudo) => (
-      <a-entity face-camera>
+      <a-entity>
         <a-ring radius-inner="5" radius-outer="7" color="#a855f7" material="side: double" />
         <a-text value="Audio" color="white" width="60" align="center" position="0 9 0" />
         <a-entity
@@ -741,7 +988,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     ),
 
     audioespacial: (conteudo) => (
-      <a-entity face-camera>
+      <a-entity>
         <a-ring radius-inner="5" radius-outer="7" color="#7c3aed" material="side: double" />
         <a-text value="Audio 3D" color="white" width="80" align="center" position="0 9 0" />
         <a-entity
@@ -751,7 +998,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     ),
 
     video: (conteudo) => (
-      <a-entity face-camera>
+      <a-entity>
         <a-ring radius-inner="5" radius-outer="7" color="#f59e0b" material="side: double" />
         <a-text value={conteudo ? "Video" : "Video?"} color="white" width="60" align="center" position="0 9 0" />
       </a-entity>
@@ -759,7 +1006,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     link: (conteudo, hotspot) => (
       (hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back") ? (
-        <a-entity face-camera>
+        <a-entity>
           <a-ring
             radius-inner="8"
             radius-outer="12"
@@ -808,7 +1055,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             title={conteudo}
             position="0 0 0.5"
             scale="16 16 1"
-            look-at="[camera]"
           />
         </>
       )
@@ -979,10 +1225,42 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     };
   }, [enableContextMenu, hotspots, navigateOnHotspot, activeEnvironment, isNavigationTransitioning]);
 
-  const createHotspot = async () => {
+  const getPointerRaycaster = (clientX, clientY) => {
     const sceneEl = sceneRef.current;
+    const THREE = window?.THREE;
+    if (!sceneEl?.camera || !sceneEl?.canvas || !THREE) return null;
+
+    const rect = sceneEl.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+
+    const mouse = {
+      x: ((clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((clientY - rect.top) / rect.height) * 2 + 1,
+    };
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, sceneEl.camera);
+    return { THREE, raycaster };
+  };
+
+  const resolveHotspotFromObject = (object3D) => {
+    let current = object3D;
+    while (current) {
+      const el = current.el;
+      if (el?.dataset?.id) {
+        const id = Number(el.dataset.id);
+        if (Number.isFinite(id)) {
+          return hotspots.find((hotspot) => Number(hotspot.id) === id) || null;
+        }
+      }
+      current = current.parent;
+    }
+    return null;
+  };
+
+  const createHotspot = async () => {
     const event = clickEventRef.current;
-    if (!sceneEl || !sceneEl.camera || !event) return;
+    if (!event) return;
 
     const pointerClientX = Number(event?.clientX ?? event?.detail?.mouseEvent?.clientX);
     const pointerClientY = Number(event?.clientY ?? event?.detail?.mouseEvent?.clientY);
@@ -991,26 +1269,33 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       return;
     }
 
-    const THREE = window.THREE;
-    if (!THREE) {
-      console.error("THREE.js ainda não carregado");
+    const raycast = getPointerRaycaster(pointerClientX, pointerClientY);
+    if (!raycast) {
+      console.error("THREE.js ou cena ainda não carregados");
       return;
     }
 
-    const rect = sceneEl.canvas.getBoundingClientRect();
-    const mouse = {
-      x: ((pointerClientX - rect.left) / rect.width) * 2 - 1,
-      y: -((pointerClientY - rect.top) / rect.height) * 2 + 1,
-    };
+    const { THREE, raycaster } = raycast;
+    let intersection = null;
 
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, sceneEl.camera);
+    const domeMesh = domeEntityRef.current?.getObject3D?.("mesh");
+    if (domeMesh) {
+      const domeHits = raycaster.intersectObject(domeMesh, true);
+      const firstDomeHit = domeHits.find((hit) => hit?.point);
+      if (firstDomeHit?.point) {
+        intersection = firstDomeHit.point.clone();
+      }
+    }
 
-    const sphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), domeRadius);
-    const intersection = new THREE.Vector3();
-    const hasIntersection = raycaster.ray.intersectSphere(sphere, intersection);
+    if (!intersection) {
+      const sphere = new THREE.Sphere(new THREE.Vector3(0, Number(domeVerticalOffset) || 0, 0), domeRadius);
+      const point = new THREE.Vector3();
+      if (raycaster.ray.intersectSphere(sphere, point)) {
+        intersection = point;
+      }
+    }
 
-    if (!hasIntersection) {
+    if (!intersection) {
       console.warn("❌ Sem interseção com o dome");
       return;
     }
@@ -1081,22 +1366,23 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const pickHotspotFromPointer = (clientX, clientY) => {
-    const sceneEl = sceneRef.current;
-    const THREE = window?.THREE;
-    if (!sceneEl?.camera || !sceneEl?.canvas || !THREE || !Array.isArray(hotspots) || hotspots.length === 0) {
+    if (!Array.isArray(hotspots) || hotspots.length === 0) {
       return null;
     }
 
-    const rect = sceneEl.canvas.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
+    const raycast = getPointerRaycaster(clientX, clientY);
+    if (!raycast) return null;
 
-    const mouse = {
-      x: ((clientX - rect.left) / rect.width) * 2 - 1,
-      y: -((clientY - rect.top) / rect.height) * 2 + 1,
-    };
+    const { THREE, raycaster } = raycast;
 
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, sceneEl.camera);
+    const sceneObject = sceneRef.current?.object3D;
+    if (sceneObject) {
+      const intersections = raycaster.intersectObject(sceneObject, true);
+      for (const hit of intersections) {
+        const matched = resolveHotspotFromObject(hit?.object);
+        if (matched) return matched;
+      }
+    }
 
     let best = null;
     let bestDistance = Infinity;
@@ -1110,7 +1396,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     });
 
-    // Tolerancia em unidades do mundo do dome 360.
+    // Fallback de tolerancia em unidades do mundo do dome 360.
     return bestDistance <= 40 ? best : null;
   };
 
@@ -1318,82 +1604,57 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       embedded
       vr-mode-ui="enabled: false"
       renderer="logarithmicDepthBuffer: true"
+      shadow="type: pcfsoft"
       className="w-full h-full"
     >
       <a-camera
         position="0 0 0"
-        camera
+        far={Math.max(4000, Math.ceil(domeRadius * 3.5 + 500))}
         look-controls
         wasd-controls-enabled="false"
         raycaster="objects: .hotspot-interaction"
         cursor="rayOrigin: mouse"
       ></a-camera>
 
-      {!isHdrOrExrEnvironment && parsedEnvironment?.mime?.startsWith("image/") ? (
-        <a-sky
-          src={imageSkySrc}
-          rotation="0 -130 0"
-          radius={domeRadius}
-          theta-start={domeThetaStartDeg}
-          theta-length={domeThetaLengthDeg}
-        />
-      ) : parsedEnvironment?.mime?.startsWith("video/") ? (
-        <>
-          <video style={{ 'display': 'none' }} id="environment" ref={handleVideoRef} preload="auto" crossOrigin="anonymous" autoPlay loop muted playsInline>
-            <source src={parsedEnvironment.url} type={parsedEnvironment.mime}></source>
-          </video>
-          {videoReady && (
-            <a-sky
-              src="#environment"
-              rotation="0 -130 0"
-              radius={domeRadius}
-              theta-start={domeThetaStartDeg}
-              theta-length={domeThetaLengthDeg}
-            />
-          )}
-        </>
-      ) : null}
-
-      <a-circle
-        position={`0 ${domeFloorY.toFixed(3)} 0`}
-        rotation="-90 0 0"
-        radius={domeFloorRadius}
-        color={isHdrOrExrEnvironment ? "#202632" : "#ffffff"}
-        material={domeFloorMaterial}
+      <a-entity ref={ambientLightRef} light={`type: ambient; color: #ffffff; intensity: ${Math.max(0, domeLightWorldOpacity)}`} />
+      <a-entity
+        ref={pointLightRef}
+        position={pointLightPosition}
+        light={`type: point; color: ${domeLightColor}; intensity: ${domeLightStrength}; distance: ${domeLightDistance}; decay: 2; castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048; shadowBias: ${domeShadowBias}`}
       />
 
-      <a-ring
-        position={`0 ${(domeFloorY + 0.02).toFixed(3)} 0`}
-        rotation="-90 0 0"
-        radius-inner={Math.max(1, domeFloorRadius - Math.max(10, domeFloorRadius * 0.03))}
-        radius-outer={domeFloorRadius}
-        color={isHdrOrExrEnvironment ? "#7f8ea3" : "#ffffff"}
-        material={isHdrOrExrEnvironment
-          ? "side: double; transparent: true; opacity: 0.35"
-          : "side: double; transparent: true; opacity: 0.12"}
-      />
+      {parsedEnvironment?.mime?.startsWith("video/") && (
+        <video style={{ display: "none" }} id="environment" ref={handleVideoRef} preload="auto" crossOrigin="anonymous" autoPlay loop muted playsInline>
+          <source src={parsedEnvironment.url} type={parsedEnvironment.mime} />
+        </video>
+      )}
+
+      {panoramaSrc && panoramaKind && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} shadow="cast: false; receive: true" />}
 
       {previewHotspots.map((pos) => (
         <a-entity
           key={pos.id}
+          className="hotspot-root"
+          data-id={pos.id}
           position={`${pos.x} ${pos.y} ${pos.z}`}
           rotation={`${Number(pos.rot_pitch) || 0} ${Number(pos.rot_yaw) || 0} 0`}
-          scale={`${Math.min(HOTSPOT_SCALE_MAX, Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1))} ${Math.min(HOTSPOT_SCALE_MAX, Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1))} ${Math.min(HOTSPOT_SCALE_MAX, Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1))}`}
+          scale={`${Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1)} ${Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1)} ${Math.max(HOTSPOT_SCALE_MIN, Number(pos.scale) || 1)}`}
+          shadow="cast: true; receive: true"
         >
           {(!pos.tipo)
-            ? <a-sphere position="0 0 0" radius="16" color="red" />
+            ? <a-sphere position="0 0 0" radius="16" color="red" shadow="cast: true; receive: true" />
             : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
 
           <a-plane
             className="clickable hotspot-interaction"
             data-id={pos.id}
-            position="0 0 -5"
+            position="0 0 0"
             width="25"
             height="25"
-            face-camera
             material="color: #fff; opacity: 0; side: double"
             transparent="true"
             rotation="0 0 0"
+            shadow="cast: false; receive: false"
             event-set__enter="_event: mouseenter; opacity: 0.15"
             event-set__leave="_event: mouseleave; opacity: 0"
           />
@@ -1710,7 +1971,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             className="w-full accent-black"
             type="range"
             min="300"
-            max="1400"
+            max={Math.max(1400, Math.ceil(domeRadius))}
             step="10"
             value={domeRadius}
             onChange={(e) => {
@@ -1720,7 +1981,73 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 radius: nextRadius,
                 thetaStartDeg: domeThetaStartDeg,
                 thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: domeVerticalOffset,
+                lightRotationDeg: domeLightRotationDeg,
+                lightStrength: domeLightStrength,
+                lightWorldOpacity: domeLightWorldOpacity,
+                lightBlur: domeLightBlur,
               });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="10"
+            value={domeRadius}
+            onChange={(e) => {
+              const nextRadius = parseFloat(e.target.value);
+              if (!Number.isFinite(nextRadius)) return;
+              persistDomeSettingsForView({ radius: nextRadius });
+            }}
+          />
+
+          <label className="text-sm font-medium">Posição vertical: {Math.round(domeVerticalOffset)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min={DOME_VERTICAL_OFFSET_MIN}
+            max={Math.max(DOME_VERTICAL_OFFSET_MAX, Math.ceil(domeVerticalOffset))}
+            step="1"
+            value={domeVerticalOffset}
+            onChange={(e) => {
+              const nextOffset = parseFloat(e.target.value);
+              if (!Number.isFinite(nextOffset)) return;
+              persistDomeSettingsForView({
+                radius: domeRadius,
+                thetaStartDeg: domeThetaStartDeg,
+                thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: nextOffset,
+                lightRotationDeg: domeLightRotationDeg,
+                lightStrength: domeLightStrength,
+                lightWorldOpacity: domeLightWorldOpacity,
+                lightBlur: domeLightBlur,
+              });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="1"
+            value={domeVerticalOffset}
+            onChange={(e) => {
+              const nextOffset = parseFloat(e.target.value);
+              if (!Number.isFinite(nextOffset)) return;
+              persistDomeSettingsForView({ verticalOffset: nextOffset });
+            }}
+          />
+
+          <label className="text-sm font-medium">Rotacao do dome (Y): {Math.round(domeRotationY)}°</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="-360"
+            max="360"
+            step="1"
+            value={domeRotationY}
+            onChange={(e) => {
+              const nextRotationY = parseFloat(e.target.value);
+              if (!Number.isFinite(nextRotationY)) return;
+              persistDomeSettingsForView({ rotationY: nextRotationY });
             }}
           />
 
@@ -1751,6 +2078,203 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               const nextLength = parseInt(e.target.value, 10);
               if (!Number.isFinite(nextLength)) return;
               updateDomeThetaLength(nextLength);
+            }}
+          />
+
+          <div className="mt-2 border-t border-black/10 pt-2" />
+          <label className="text-sm font-medium">Rotacao da luz: {Math.round(domeLightRotationDeg)}°</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="0"
+            max="360"
+            step="1"
+            value={domeLightRotationDeg}
+            onChange={(e) => {
+              const nextRotation = parseFloat(e.target.value);
+              if (!Number.isFinite(nextRotation)) return;
+              persistDomeSettingsForView({
+                radius: domeRadius,
+                thetaStartDeg: domeThetaStartDeg,
+                thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: domeVerticalOffset,
+                lightRotationDeg: nextRotation,
+                lightStrength: domeLightStrength,
+                lightWorldOpacity: domeLightWorldOpacity,
+                lightBlur: domeLightBlur,
+              });
+            }}
+          />
+
+          <label className="text-sm font-medium">Strength: {domeLightStrength.toFixed(2)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="0"
+            max={Math.max(8, Math.ceil(domeLightStrength))}
+            step="0.01"
+            value={domeLightStrength}
+            onChange={(e) => {
+              const nextStrength = parseFloat(e.target.value);
+              if (!Number.isFinite(nextStrength)) return;
+              persistDomeSettingsForView({
+                radius: domeRadius,
+                thetaStartDeg: domeThetaStartDeg,
+                thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: domeVerticalOffset,
+                lightRotationDeg: domeLightRotationDeg,
+                lightStrength: nextStrength,
+                lightWorldOpacity: domeLightWorldOpacity,
+                lightBlur: domeLightBlur,
+              });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="0.01"
+            min="0"
+            value={domeLightStrength}
+            onChange={(e) => {
+              const nextStrength = parseFloat(e.target.value);
+              if (!Number.isFinite(nextStrength)) return;
+              persistDomeSettingsForView({ lightStrength: nextStrength });
+            }}
+          />
+
+          <label className="text-sm font-medium">Cor da luz</label>
+          <input
+            className="h-9 w-full cursor-pointer rounded border border-black/20 bg-white"
+            type="color"
+            value={domeLightColor}
+            onChange={(e) => {
+              const nextColor = String(e.target.value || "");
+              persistDomeSettingsForView({ lightColor: nextColor });
+            }}
+          />
+
+          <label className="text-sm font-medium">Distancia da luz: {Math.round(domeLightDistance)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="200"
+            max={Math.max(4000, Math.ceil(domeLightDistance))}
+            step="10"
+            value={domeLightDistance}
+            onChange={(e) => {
+              const nextDistance = parseFloat(e.target.value);
+              if (!Number.isFinite(nextDistance)) return;
+              persistDomeSettingsForView({ lightDistance: nextDistance });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="10"
+            min="1"
+            value={domeLightDistance}
+            onChange={(e) => {
+              const nextDistance = parseFloat(e.target.value);
+              if (!Number.isFinite(nextDistance)) return;
+              persistDomeSettingsForView({ lightDistance: nextDistance });
+            }}
+          />
+
+          <label className="text-sm font-medium">World Opacity: {domeLightWorldOpacity.toFixed(2)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="0"
+            max={Math.max(3, Math.ceil(domeLightWorldOpacity))}
+            step="0.01"
+            value={domeLightWorldOpacity}
+            onChange={(e) => {
+              const nextWorldOpacity = parseFloat(e.target.value);
+              if (!Number.isFinite(nextWorldOpacity)) return;
+              persistDomeSettingsForView({
+                radius: domeRadius,
+                thetaStartDeg: domeThetaStartDeg,
+                thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: domeVerticalOffset,
+                lightRotationDeg: domeLightRotationDeg,
+                lightStrength: domeLightStrength,
+                lightWorldOpacity: nextWorldOpacity,
+                lightBlur: domeLightBlur,
+              });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="0.01"
+            min="0"
+            value={domeLightWorldOpacity}
+            onChange={(e) => {
+              const nextWorldOpacity = parseFloat(e.target.value);
+              if (!Number.isFinite(nextWorldOpacity)) return;
+              persistDomeSettingsForView({ lightWorldOpacity: nextWorldOpacity });
+            }}
+          />
+
+          <label className="text-sm font-medium">Blur: {domeLightBlur.toFixed(2)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="0"
+            max={Math.max(10, Math.ceil(domeLightBlur))}
+            step="0.01"
+            value={domeLightBlur}
+            onChange={(e) => {
+              const nextBlur = parseFloat(e.target.value);
+              if (!Number.isFinite(nextBlur)) return;
+              persistDomeSettingsForView({
+                radius: domeRadius,
+                thetaStartDeg: domeThetaStartDeg,
+                thetaLengthDeg: domeThetaLengthDeg,
+                verticalOffset: domeVerticalOffset,
+                lightRotationDeg: domeLightRotationDeg,
+                lightStrength: domeLightStrength,
+                lightWorldOpacity: domeLightWorldOpacity,
+                lightBlur: nextBlur,
+              });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="0.01"
+            min="0"
+            value={domeLightBlur}
+            onChange={(e) => {
+              const nextBlur = parseFloat(e.target.value);
+              if (!Number.isFinite(nextBlur)) return;
+              persistDomeSettingsForView({ lightBlur: nextBlur });
+            }}
+          />
+
+          <label className="text-sm font-medium">Shadow Bias: {domeShadowBias.toFixed(5)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min={-Math.max(0.01, Math.abs(domeShadowBias))}
+            max={Math.max(0.01, Math.abs(domeShadowBias))}
+            step="0.00001"
+            value={domeShadowBias}
+            onChange={(e) => {
+              const nextBias = parseFloat(e.target.value);
+              if (!Number.isFinite(nextBias)) return;
+              persistDomeSettingsForView({ shadowBias: nextBias });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="0.00001"
+            value={domeShadowBias}
+            onChange={(e) => {
+              const nextBias = parseFloat(e.target.value);
+              if (!Number.isFinite(nextBias)) return;
+              persistDomeSettingsForView({ shadowBias: nextBias });
             }}
           />
         </div>
@@ -1906,26 +2430,25 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             <input
               type="range"
               min="0.4"
-              max="20"
+              max={Math.max(20, Math.ceil(Number(editScale) || 1))}
               step="0.05"
               value={Number(editScale) || 1}
               onChange={(e) => {
                 const nextScale = parseFloat(e.target.value);
                 if (!Number.isFinite(nextScale)) return;
-                setEditScale(clamp(nextScale, HOTSPOT_SCALE_MIN, HOTSPOT_SCALE_MAX));
+                setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
               }}
               className="w-full accent-black"
             />
             <input
               type="number"
               min="0.4"
-              max="20"
               step="0.05"
               value={(Number(editScale) || 1).toFixed(2)}
               onChange={(e) => {
                 const nextScale = parseFloat(e.target.value);
                 if (!Number.isFinite(nextScale)) return;
-                setEditScale(clamp(nextScale, HOTSPOT_SCALE_MIN, HOTSPOT_SCALE_MAX));
+                setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
               }}
               className="border rounded px-2 py-1 dark:bg-black"
             />

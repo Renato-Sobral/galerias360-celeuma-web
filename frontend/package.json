@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3001",
-    "build": "next build",
+    "clean": "npm run guard:dev-not-running && node -e \"require('fs').rmSync('.next',{recursive:true,force:true});\"",
+    "guard:dev-not-running": "node -e \"const http=require('http');const msg='Dev server esta a correr na porta 3001. Pare o npm run dev antes de correr npm run build (porque o build apaga .next).';const req=http.request({host:'127.0.0.1',port:3001,path:'/',method:'GET',timeout:250},()=>{console.error(msg);process.exit(1);});req.on('timeout',()=>{req.destroy();process.exit(0);});req.on('error',()=>process.exit(0));req.end();\"",
+    "dev": "npm run clean && next dev -H 0.0.0.0 -p 3001",
+    "build": "npm run guard:dev-not-running && npm run clean && next build",
     "start": "next start -H 0.0.0.0 -p 3001",
     "lint": "next lint"
   },

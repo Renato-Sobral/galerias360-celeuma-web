@@ -18,13 +18,14 @@ export function relativePathFromUploadsUrl(value) {
   if (!value || typeof value !== "string") return "";
 
   const normalized = value.replace(/\\/g, "/");
-  const match = normalized.match(/\/uploads\/(.+)$/);
+  const withoutQuery = normalized.split("?")[0].split("#")[0];
+  const match = withoutQuery.match(/\/uploads\/(.+)$/);
   if (match?.[1]) {
     return decodeURIComponent(match[1].replace(/^\/+/, ""));
   }
 
-  if (normalized.startsWith("uploads/")) {
-    return decodeURIComponent(normalized.slice("uploads/".length));
+  if (withoutQuery.startsWith("uploads/")) {
+    return decodeURIComponent(withoutQuery.slice("uploads/".length));
   }
 
   return "";

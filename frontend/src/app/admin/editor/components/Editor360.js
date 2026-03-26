@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import 'aframe';
+import { ensurePanoramaDomeComponent } from "../../../lib/aframe-panorama-dome";
 
 export default function Editor360({ file }) {
   const sceneRef = useRef(null);
-  const hdrSphereRef = useRef(null);
+  const domeEntityRef = useRef(null);
+  const [domeComponentReady, setDomeComponentReady] = useState(false);
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
   const DEFAULT_PANORAMA_DOME_THETA_START_DEG = 0;
   const DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG = 90;
@@ -16,6 +18,7 @@ export default function Editor360({ file }) {
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [domeThetaStartDeg, setDomeThetaStartDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_START_DEG);
   const [domeThetaLengthDeg, setDomeThetaLengthDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG);
+  const [domeVerticalOffset, setDomeVerticalOffset] = useState(0);
   const isHdrOrExrFile = /\.(hdr|exr)$/i.test(String(file?.name || ""));
   const domeThetaStartRad = useMemo(() => (domeThetaStartDeg * Math.PI) / 180, [domeThetaStartDeg]);
   const domeThetaLengthRad = useMemo(() => (domeThetaLengthDeg * Math.PI) / 180, [domeThetaLengthDeg]);
@@ -32,16 +35,56 @@ export default function Editor360({ file }) {
     return "side: double; transparent: true; opacity: 0.92; roughness: 1; metalness: 0";
   }, [imgURL, isHdrOrExrFile]);
 
-  const disposeHdrSphere = () => {
-    const mesh = hdrSphereRef.current;
-    if (!mesh) return;
+  useEffect(() => {
+    let mounted = true;
+    ensurePanoramaDomeComponent()
+      .catch(() => {
+        // ignore; errors are surfaced via events when the entity tries to load
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setDomeComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
+      });
 
-    if (mesh.parent) mesh.parent.remove(mesh);
-    if (mesh.material?.map) mesh.material.map.dispose();
-    mesh.material?.dispose?.();
-    mesh.geometry?.dispose?.();
-    hdrSphereRef.current = null;
-  };
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = domeEntityRef.current;
+    if (!el) return;
+
+    const onError = (evt) => {
+      const message = evt?.detail?.message;
+      setEnvironmentError(message || "Nao foi possivel carregar o dome no editor.");
+    };
+    const onLoaded = () => setEnvironmentError("");
+
+    el.addEventListener("panorama-dome-error", onError);
+    el.addEventListener("panorama-dome-loaded", onLoaded);
+    return () => {
+      el.removeEventListener("panorama-dome-error", onError);
+      el.removeEventListener("panorama-dome-loaded", onLoaded);
+    };
+  }, [imgURL, isHdrOrExrFile]);
+
+  useEffect(() => {
+    const el = domeEntityRef.current;
+    if (!el) return;
+    if (!imgURL) return;
+    if (!domeComponentReady) return;
+
+    el.setAttribute("panorama-dome", {
+      kind: isHdrOrExrFile ? "hdr" : "image",
+      src: imgURL,
+      radius: domeRadius,
+      rotationY: -90,
+      opacity: 1,
+      alignY: "center",
+      model: "/models/Dome.fbx",
+    });
+  }, [domeComponentReady, domeRadius, imgURL, isHdrOrExrFile]);
 
   useEffect(() => {
     if (!file) return;
@@ -70,73 +113,7 @@ export default function Editor360({ file }) {
     };
   }, [file, isHdrOrExrFile]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadHdrOrExr = async () => {
-      const sceneEl = sceneRef.current;
-      if (!sceneEl) return;
-
-      if (!isHdrOrExrFile || !imgURL) {
-        disposeHdrSphere();
-        return;
-      }
-
-      try {
-        const THREE = await import("three");
-        const isExr = /\.exr$/i.test(String(file?.name || ""));
-        const loaderModule = isExr
-          ? await import("three/examples/jsm/loaders/EXRLoader.js")
-          : await import("three/examples/jsm/loaders/RGBELoader.js");
-        const Loader = isExr ? loaderModule.EXRLoader : loaderModule.RGBELoader;
-        const loader = new Loader();
-
-        loader.load(
-          imgURL,
-          (texture) => {
-            if (cancelled) {
-              texture.dispose();
-              return;
-            }
-
-            disposeHdrSphere();
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-
-            const geometry = new THREE.SphereGeometry(
-              domeRadius,
-              64,
-              32,
-              0,
-              Math.PI * 2,
-              domeThetaStartRad,
-              domeThetaLengthRad
-            );
-            geometry.scale(-1, 1, 1);
-            const material = new THREE.MeshBasicMaterial({ map: texture });
-            const mesh = new THREE.Mesh(geometry, material);
-
-            sceneEl.object3D.add(mesh);
-            hdrSphereRef.current = mesh;
-          },
-          undefined,
-          () => {
-            if (cancelled) return;
-            setEnvironmentError("Nao foi possivel carregar o ficheiro HDR/EXR no editor.");
-          }
-        );
-      } catch (_error) {
-        if (cancelled) return;
-        setEnvironmentError("Nao foi possivel carregar o ficheiro HDR/EXR no editor.");
-      }
-    };
-
-    loadHdrOrExr();
-
-    return () => {
-      cancelled = true;
-      disposeHdrSphere();
-    };
-  }, [domeRadius, domeThetaLengthRad, domeThetaStartRad, file?.name, imgURL, isHdrOrExrFile]);
+  // HDR/EXR and images are now handled by the panorama-dome A-Frame component.
 
   // Aplicar filtros via CSS no canvas
   useEffect(() => {
@@ -151,6 +128,44 @@ export default function Editor360({ file }) {
     }
   }, [brightness, contrast, saturation, hue]);
 
+  useEffect(() => {
+    const sceneEl = sceneRef.current;
+    if (!sceneEl) return;
+
+    const apply = () => {
+      try {
+        const renderer = sceneEl.renderer;
+        if (renderer) {
+          renderer.shadowMap.enabled = true;
+          renderer.shadowMap.type = window.THREE?.PCFSoftShadowMap ?? renderer.shadowMap.type;
+          renderer.setClearColor?.(0x000000, 1);
+        }
+
+        sceneEl.object3D.traverse((obj) => {
+          if (obj?.isLight) {
+            obj.castShadow = true;
+            if (obj.shadow) {
+              obj.shadow.mapSize?.set?.(2048, 2048);
+              obj.shadow.bias = -0.00008;
+            }
+          }
+          if (obj?.isMesh) {
+            obj.castShadow = true;
+            obj.receiveShadow = true;
+          }
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    sceneEl.addEventListener("renderstart", apply);
+    apply();
+    return () => {
+      sceneEl.removeEventListener("renderstart", apply);
+    };
+  }, []);
+
   return (
     <div style={{ display: "flex" }}>
       <div style={{ width: "800px", height: "600px", position: 'relative' }}>
@@ -163,40 +178,15 @@ export default function Editor360({ file }) {
           ref={sceneRef}
           embedded
           vr-mode-ui="enabled: false"
+          shadow="type: pcfsoft"
           style={{ width: '100%', height: '100%' }}
         >
           <a-assets>
             {imgURL && !isHdrOrExrFile && <img id="panorama" src={imgURL} crossOrigin="anonymous" />}
           </a-assets>
 
-          {imgURL && !isHdrOrExrFile && (
-            <a-sky
-              id="sky"
-              src="#panorama"
-              rotation="0 -90 0"
-              radius={domeRadius}
-              theta-start={domeThetaStartDeg}
-              theta-length={domeThetaLengthDeg}
-            ></a-sky>
-          )}
-          <a-circle
-            position={`0 ${domeFloorY.toFixed(3)} 0`}
-            rotation="-90 0 0"
-            radius={domeFloorRadius}
-            color={isHdrOrExrFile ? "#202632" : "#ffffff"}
-            material={domeFloorMaterial}
-          />
-          <a-ring
-            position={`0 ${(domeFloorY + 0.02).toFixed(3)} 0`}
-            rotation="-90 0 0"
-            radius-inner={Math.max(1, domeFloorRadius - Math.max(10, domeFloorRadius * 0.03))}
-            radius-outer={domeFloorRadius}
-            color={isHdrOrExrFile ? "#7f8ea3" : "#ffffff"}
-            material={isHdrOrExrFile
-              ? "side: double; transparent: true; opacity: 0.35"
-              : "side: double; transparent: true; opacity: 0.12"}
-          />
-          <a-camera wasd-controls-enabled="true"></a-camera>
+          {imgURL && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} />}
+          <a-camera wasd-controls-enabled="true" far={Math.max(50, Math.ceil(domeRadius * 1.05 + 10))}></a-camera>
         </a-scene>
       </div>
 
@@ -211,6 +201,17 @@ export default function Editor360({ file }) {
             step={10}
             value={domeRadius}
             onChange={e => setDomeRadius(parseFloat(e.target.value))}
+          />
+        </div>
+        <div>
+          <label>Posição vertical: {Math.round(domeVerticalOffset)}</label>
+          <input
+            type="range"
+            min={-2000}
+            max={2000}
+            step={1}
+            value={domeVerticalOffset}
+            onChange={e => setDomeVerticalOffset(parseFloat(e.target.value))}
           />
         </div>
         <div>
