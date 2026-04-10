@@ -287,6 +287,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editNavigationPath, setEditNavigationPath] = useState("");
   const [editNavigationMode, setEditNavigationMode] = useState("file");
   const [editModelSelection, setEditModelSelection] = useState(null);
+  const [editImageSelection, setEditImageSelection] = useState(null);
   const [editImage4pSelection, setEditImage4pSelection] = useState(null);
   const [editImage4pPreviewUrl, setEditImage4pPreviewUrl] = useState("");
   const [editImage4pPoints, setEditImage4pPoints] = useState([]);
@@ -1590,8 +1591,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     imagem: (conteudo) => (
       <a-entity>
-        <a-ring radius-inner="5" radius-outer="7" color="#06b6d4" material="side: double" />
-        <a-text value={conteudo ? "Imagem" : "Imagem?"} color="white" width="70" align="center" position="0 9 0" />
+        {conteudo ? (
+          <a-image src={conteudo} width="30" height="30" position="0 0 0" shadow="cast: true; receive: true" />
+        ) : (
+          <>
+            <a-ring radius-inner="5" radius-outer="7" color="#06b6d4" material="side: double" />
+            <a-text value="Imagem?" color="white" width="70" align="center" position="0 9 0" />
+          </>
+        )}
       </a-entity>
     ),
 
@@ -2210,6 +2217,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditNavigationPath("");
         setEditNavigationMode("file");
         setEditModelSelection(null);
+        setEditImageSelection(null);
         setEditImage4pSelection(null);
         setEditImage4pPreviewUrl("");
         setEditImage4pPoints([]);
@@ -2390,6 +2398,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         Swal.fire({
           title: "Modelo em falta",
           text: "Seleciona ou faz upload de um ficheiro GLB/GLTF para o hotspot de modelo 3D.",
+          icon: "warning",
+          confirmButtonColor: "#171717",
+        });
+        return;
+      }
+    }
+
+    if (editTipo === "imagem") {
+      if (editImageSelection) {
+        const resolvedImage = await resolveMediaSelection(editImageSelection, "media");
+        const resolvedImageUrl = resolvedImage?.url || resolveUploadsUrl(resolvedImage?.path || "");
+
+        if (!resolvedImageUrl) {
+          Swal.fire({
+            title: "Imagem inválida",
+            text: "Não foi possível resolver o ficheiro de imagem selecionado.",
+            icon: "warning",
+            confirmButtonColor: "#171717",
+          });
+          return;
+        }
+
+        finalConteudoRaw = resolvedImageUrl;
+      }
+
+      if (!String(finalConteudoRaw || "").trim()) {
+        Swal.fire({
+          title: "Imagem em falta",
+          text: "Seleciona ou faz upload de uma imagem.",
           icon: "warning",
           confirmButtonColor: "#171717",
         });
@@ -2924,6 +2961,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   );
                   setEditModelSelection(
                     selectedHotspot.tipo === "modelo3d" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
+                      ? createLibrarySelection(relativePathFromUploadsUrl(selectedHotspot.conteudo || ""))
+                      : null
+                  );
+                  setEditImageSelection(
+                    selectedHotspot.tipo === "imagem" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
                       ? createLibrarySelection(relativePathFromUploadsUrl(selectedHotspot.conteudo || ""))
                       : null
                   );
@@ -3478,6 +3520,28 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   </div>
                 </div>
               </div>
+            ) : editTipo === "imagem" ? (
+              <MediaSourceField
+                label="Imagem (Media Library)"
+                accept="image/*"
+                selection={editImageSelection}
+                onChange={(selection) => {
+                  setEditImageSelection(selection);
+                  if (!selection) {
+                    setEditConteudo("");
+                    return;
+                  }
+
+                  if (selection.source === "library") {
+                    setEditConteudo(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                    return;
+                  }
+
+                  setEditConteudo(selection.file?.name || "");
+                }}
+                destinationPath="media"
+                helperText="Escolhe ou envia uma imagem no File Manager para exibir."
+              />
             ) : (
               <input
                 type="text"
