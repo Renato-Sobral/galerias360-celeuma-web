@@ -141,6 +141,12 @@ function serializePonto(ponto, options = {}) {
     };
 }
 
+function normalizePanoramaShape(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'sphere' || raw === 'esfera') return 'sphere';
+    return 'sphere';
+}
+
 async function validateCategoriasExistem(categoriaIds) {
     if (!categoriaIds.length) return false;
     const count = await CategoriaPonto.count({ where: { id_categoria: categoriaIds } });
@@ -182,6 +188,7 @@ exports.createPonto = (req, res) => {
                 image: null,
                 imagePath,
                 iv: null,
+                panoramaShape: 'sphere',
             });
 
             await novoPonto.setCategorias(categoriaIds);
@@ -335,6 +342,8 @@ exports.updatePonto = (req, res) => {
             ponto.description = description ?? ponto.description;
             ponto.latitude = latitude ?? ponto.latitude;
             ponto.longitude = longitude ?? ponto.longitude;
+
+            ponto.panoramaShape = 'sphere';
 
             await ponto.save();
 

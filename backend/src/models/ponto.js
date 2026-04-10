@@ -38,6 +38,11 @@ const Ponto = sequelize.define('pontos', {
     iv: {
         type: DataTypes.STRING,
         allowNull: true
+    },
+    panoramaShape: {
+        type: DataTypes.ENUM('dome', 'sphere'),
+        allowNull: false,
+        defaultValue: 'sphere'
     }
 },
     {

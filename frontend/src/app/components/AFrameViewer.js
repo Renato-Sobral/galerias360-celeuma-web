@@ -27,10 +27,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const NAV_FILE_PREFIX = "nav:file:";
   const NAV_BACK_VALUE = "nav:back";
   const HOTSPOT_META_PREFIX = "hsmeta:";
+  const IMAGE4P_PREFIX = "img4p:";
   const HOTSPOT_SCALE_MIN = 0.2;
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
-  const DEFAULT_PANORAMA_DOME_THETA_START_DEG = 0;
-  const DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG = 90;
   const DEFAULT_DOME_LIGHT_ROTATION_DEG = 0;
   const DEFAULT_DOME_LIGHT_STRENGTH = 1;
   const DEFAULT_DOME_LIGHT_WORLD_OPACITY = 0;
@@ -39,14 +38,83 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const DEFAULT_DOME_LIGHT_COLOR = "#ffffff";
   const DEFAULT_DOME_LIGHT_DISTANCE = 2200;
   const DEFAULT_DOME_SHADOW_BIAS = -0.00015;
+  const DEFAULT_SHADOW_RECEIVER_Y_OFFSET = 0;
+  const DEFAULT_MODEL_CONTACT_SHADOW_OPACITY = 0.34;
+  const MODEL_CONTACT_SHADOW_MIN_RADIUS = 0.3;
+  const MODEL_CONTACT_SHADOW_GROUND_SCALE = 1.25;
+  const MODEL_CONTACT_SHADOW_DOME_SCALE = 1.2;
   const DOME_LIGHT_RADIUS = 45;
   const DOME_LIGHT_HEIGHT = 35;
+
+  const toFiniteNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const clamp01 = (value, fallback = 0) => {
+    const numeric = toFiniteNumber(value, fallback);
+    return Math.max(0, Math.min(1, numeric));
+  };
+
+  const createContactShadowMesh = (THREE, opacity) => {
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -95;
+    mesh.rotation.x = -Math.PI / 2;
+    return mesh;
+  };
+
+  const disposeContactShadowMesh = (mesh) => {
+    if (!mesh) return;
+    if (mesh.parent) {
+      mesh.parent.remove(mesh);
+    }
+    mesh.geometry?.dispose?.();
+    mesh.material?.dispose?.();
+  };
+
+  const applyContactShadow = ({ THREE, entityObject3D, mesh, opacity, radius }) => {
+    let targetMesh = mesh;
+    if (!targetMesh) {
+      targetMesh = createContactShadowMesh(THREE, opacity);
+      entityObject3D.add(targetMesh);
+    }
+
+    targetMesh.scale.setScalar(radius);
+    targetMesh.position.set(0, 0.02, 0);
+    targetMesh.material.opacity = opacity;
+
+    return targetMesh;
+  };
+
+  const applyModelShadowFlags = (modelMesh) => {
+    modelMesh.traverse((child) => {
+      if (!child?.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
+  };
+
+  const getModelHotspotPlacement = (hotspot, currentFloorY) => {
+    const placement = String(hotspot?.placement || "");
+    const isGround = placement === "ground" || Math.abs(toFiniteNumber(hotspot?.y, 0) - currentFloorY) <= 0.001;
+    return { placement, isGround };
+  };
 
   const encodeDestinationPointContent = (targetPontoId) => `${NAV_POINT_PREFIX}${targetPontoId}`;
   const encodeDestinationFileContent = (targetFilePath) => `${NAV_FILE_PREFIX}${targetFilePath}`;
   const encodeDestinationBackContent = () => NAV_BACK_VALUE;
 
-  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0) => {
+  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0, placement = "") => {
     const payload = {
       value: String(rawValue || ""),
       view: String(viewPath || "").replace(/^\/+/, ""),
@@ -55,6 +123,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         : 1,
       rotYaw: Number.isFinite(Number(rotYaw)) ? Number(rotYaw) : 0,
       rotPitch: Number.isFinite(Number(rotPitch)) ? Number(rotPitch) : 0,
+      placement: String(placement || ""),
     };
 
     try {
@@ -67,7 +136,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const decodeHotspotContent = (storedValue) => {
     const value = String(storedValue || "");
     if (!value.startsWith(HOTSPOT_META_PREFIX)) {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0 };
+      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "" };
     }
 
     try {
@@ -82,9 +151,59 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           : 1,
         rotYaw: Number.isFinite(Number(parsed?.rotYaw)) ? Number(parsed.rotYaw) : 0,
         rotPitch: Number.isFinite(Number(parsed?.rotPitch)) ? Number(parsed.rotPitch) : 0,
+        placement: String(parsed?.placement || ""),
       };
     } catch {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0 };
+      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "" };
+    }
+  };
+
+  const encodeImage4pValue = (payload) => {
+    const safePayload = {
+      src: String(payload?.src || ""),
+      points: Array.isArray(payload?.points) ? payload.points : [],
+      opacity: Number.isFinite(Number(payload?.opacity)) ? Number(payload.opacity) : 1,
+      brightness: Number.isFinite(Number(payload?.brightness)) ? Number(payload.brightness) : 1,
+      inset: Number.isFinite(Number(payload?.inset)) ? Number(payload.inset) : 0.6,
+      rotateDeg: Number.isFinite(Number(payload?.rotateDeg)) ? Number(payload.rotateDeg) : 0,
+      flipX: Boolean(payload?.flipX),
+      flipY: Boolean(payload?.flipY),
+    };
+
+    try {
+      return `${IMAGE4P_PREFIX}${btoa(unescape(encodeURIComponent(JSON.stringify(safePayload))))}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const decodeImage4pValue = (rawValue) => {
+    const value = String(rawValue || "");
+    if (!value.startsWith(IMAGE4P_PREFIX)) return null;
+
+    try {
+      const encoded = value.slice(IMAGE4P_PREFIX.length);
+      const json = decodeURIComponent(escape(atob(encoded)));
+      const parsed = JSON.parse(json);
+      const points = Array.isArray(parsed?.points) ? parsed.points : [];
+      return {
+        src: String(parsed?.src || ""),
+        points: points
+          .map((p) => ({
+            x: Number(p?.x),
+            y: Number(p?.y),
+            z: Number(p?.z),
+          }))
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)),
+        opacity: Number.isFinite(Number(parsed?.opacity)) ? Number(parsed.opacity) : 1,
+        brightness: Number.isFinite(Number(parsed?.brightness)) ? Number(parsed.brightness) : 1,
+        inset: Number.isFinite(Number(parsed?.inset)) ? Number(parsed.inset) : 0.6,
+        rotateDeg: Number.isFinite(Number(parsed?.rotateDeg)) ? Number(parsed.rotateDeg) : 0,
+        flipX: Boolean(parsed?.flipX),
+        flipY: Boolean(parsed?.flipY),
+      };
+    } catch {
+      return null;
     }
   };
 
@@ -125,11 +244,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
   const sceneRef = useRef(null);
   const domeEntityRef = useRef(null);
+  const groundPlaneRef = useRef(null);
   const ambientLightRef = useRef(null);
   const pointLightRef = useRef(null);
   const [domeComponentReady, setDomeComponentReady] = useState(false);
   const [hotspots, setHotspots] = useState([]);
   const clickEventRef = useRef(null);
+  const image4pMagnifierCanvasRef = useRef(null);
+  const image4pMagnifierCursorBoxRef = useRef(null);
+  const image4pMagnifierPointerRef = useRef({ clientX: 0, clientY: 0, active: false });
+  const image4pMagnifierRafRef = useRef(null);
+  const image4pMagnifierCORSBlockedRef = useRef(false);
   const [selectedHotspot, setSelectedHotspot] = useState(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [domeDialogOpen, setDomeDialogOpen] = useState(false);
@@ -138,11 +263,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editX, setEditX] = useState(0);
   const [editY, setEditY] = useState(0);
   const [editZ, setEditZ] = useState(0);
+  const [editStickToGround, setEditStickToGround] = useState(false);
   const [editYaw, setEditYaw] = useState(0);
   const [editPitch, setEditPitch] = useState(0);
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
-  const [domeThetaStartDeg, setDomeThetaStartDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_START_DEG);
-  const [domeThetaLengthDeg, setDomeThetaLengthDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG);
   const [domeVerticalOffset, setDomeVerticalOffset] = useState(0);
   const [domeRotationY, setDomeRotationY] = useState(DEFAULT_DOME_ROTATION_Y);
   const [domeLightRotationDeg, setDomeLightRotationDeg] = useState(DEFAULT_DOME_LIGHT_ROTATION_DEG);
@@ -152,13 +276,28 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [domeLightColor, setDomeLightColor] = useState(DEFAULT_DOME_LIGHT_COLOR);
   const [domeLightDistance, setDomeLightDistance] = useState(DEFAULT_DOME_LIGHT_DISTANCE);
   const [domeShadowBias, setDomeShadowBias] = useState(DEFAULT_DOME_SHADOW_BIAS);
+  const [shadowReceiverEnabled, setShadowReceiverEnabled] = useState(false);
+  const [shadowReceiverOpacity, setShadowReceiverOpacity] = useState(0.35);
+  const [shadowReceiverYOffset, setShadowReceiverYOffset] = useState(DEFAULT_SHADOW_RECEIVER_Y_OFFSET);
   const [editRadius, setEditRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [editScale, setEditScale] = useState(1);
+  const [editPlacement, setEditPlacement] = useState("");
   const [editPontoDestino, setEditPontoDestino] = useState("");
   const [editNavigationSelection, setEditNavigationSelection] = useState(null);
   const [editNavigationPath, setEditNavigationPath] = useState("");
   const [editNavigationMode, setEditNavigationMode] = useState("file");
   const [editModelSelection, setEditModelSelection] = useState(null);
+  const [editImage4pSelection, setEditImage4pSelection] = useState(null);
+  const [editImage4pPreviewUrl, setEditImage4pPreviewUrl] = useState("");
+  const [editImage4pPoints, setEditImage4pPoints] = useState([]);
+  const [editImage4pOpacity, setEditImage4pOpacity] = useState(1);
+  const [editImage4pBrightness, setEditImage4pBrightness] = useState(1);
+  const [editImage4pInset, setEditImage4pInset] = useState(0.6);
+  const [editImage4pRotateDeg, setEditImage4pRotateDeg] = useState(0);
+  const [editImage4pFlipX, setEditImage4pFlipX] = useState(false);
+  const [editImage4pFlipY, setEditImage4pFlipY] = useState(false);
+  const [isCapturingImage4pPoints, setIsCapturingImage4pPoints] = useState(false);
+  const [isPickingGroundPosition, setIsPickingGroundPosition] = useState(false);
   const [pontosDestino, setPontosDestino] = useState([]);
   const [activePontoId, setActivePontoId] = useState(() => String(pontoId || ""));
   const [activeEnvironment, setActiveEnvironment] = useState(environment);
@@ -257,6 +396,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const tipos = [
     { label: "Texto", value: "texto" },
     { label: "Imagem", value: "imagem" },
+    { label: "Imagem (4 pontos)", value: "imagem4p" },
     { label: "Modelo 3D", value: "modelo3d" },
     { label: "Áudio", value: "audio" },
     { label: "Áudio Espacial", value: "audioespacial" },
@@ -274,6 +414,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const positionSliderMax = domeRadius;
   const DOME_VERTICAL_OFFSET_MIN = -2000;
   const DOME_VERTICAL_OFFSET_MAX = 2000;
+  const floorY = (Number(domeVerticalOffset) || 0) + (Number(shadowReceiverYOffset) || 0);
 
   const lightRotationRad = useMemo(
     () => (Number(domeLightRotationDeg) * Math.PI) / 180,
@@ -287,19 +428,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
   const normalizeDomeSettings = (settings) => {
     const baseRadius = Number(settings?.radius);
-    const baseThetaStart = Number(settings?.thetaStartDeg);
-    const baseThetaLength = Number(settings?.thetaLengthDeg);
     const baseVerticalOffset = Number(settings?.verticalOffset);
 
     const radius = Number.isFinite(baseRadius)
       ? Math.max(50, baseRadius)
       : DEFAULT_PANORAMA_DOME_RADIUS;
-    const thetaStartDeg = Number.isFinite(baseThetaStart)
-      ? clamp(baseThetaStart, 0, 160)
-      : DEFAULT_PANORAMA_DOME_THETA_START_DEG;
-    const thetaLengthDeg = Number.isFinite(baseThetaLength)
-      ? clamp(baseThetaLength, 20, 180 - thetaStartDeg)
-      : clamp(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG, 20, 180 - thetaStartDeg);
 
     const verticalOffset = Number.isFinite(baseVerticalOffset)
       ? baseVerticalOffset
@@ -316,6 +449,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const baseLightBlur = Number(settings?.lightBlur);
     const baseLightDistance = Number(settings?.lightDistance);
     const baseShadowBias = Number(settings?.shadowBias);
+    const baseShadowReceiverYOffset = Number(settings?.shadowReceiverYOffset);
     const rawLightColor = String(settings?.lightColor || "").trim();
 
     const lightRotationDeg = Number.isFinite(baseLightRotationDeg)
@@ -336,14 +470,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const shadowBias = Number.isFinite(baseShadowBias)
       ? clamp(baseShadowBias, -0.01, 0.01)
       : DEFAULT_DOME_SHADOW_BIAS;
+    const shadowReceiverYOffset = Number.isFinite(baseShadowReceiverYOffset)
+      ? clamp(baseShadowReceiverYOffset, -2000, 2000)
+      : DEFAULT_SHADOW_RECEIVER_Y_OFFSET;
     const lightColor = /^#[0-9a-fA-F]{6}$/.test(rawLightColor)
       ? rawLightColor
       : DEFAULT_DOME_LIGHT_COLOR;
 
     return {
       radius,
-      thetaStartDeg,
-      thetaLengthDeg,
       verticalOffset,
       rotationY,
       lightRotationDeg,
@@ -353,14 +488,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       lightColor,
       lightDistance,
       shadowBias,
+      shadowReceiverYOffset,
     };
   };
 
   const persistDomeSettingsForView = (nextSettings) => {
     const normalized = normalizeDomeSettings({
       radius: domeRadius,
-      thetaStartDeg: domeThetaStartDeg,
-      thetaLengthDeg: domeThetaLengthDeg,
       verticalOffset: domeVerticalOffset,
       rotationY: domeRotationY,
       lightRotationDeg: domeLightRotationDeg,
@@ -370,11 +504,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       lightColor: domeLightColor,
       lightDistance: domeLightDistance,
       shadowBias: domeShadowBias,
+      shadowReceiverYOffset,
       ...(nextSettings || {}),
     });
     setDomeRadius(normalized.radius);
-    setDomeThetaStartDeg(normalized.thetaStartDeg);
-    setDomeThetaLengthDeg(normalized.thetaLengthDeg);
     setDomeVerticalOffset(normalized.verticalOffset);
     setDomeRotationY(normalized.rotationY);
     setDomeLightRotationDeg(normalized.lightRotationDeg);
@@ -384,6 +517,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setDomeLightColor(normalized.lightColor);
     setDomeLightDistance(normalized.lightDistance);
     setDomeShadowBias(normalized.shadowBias);
+    setShadowReceiverYOffset(normalized.shadowReceiverYOffset);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
     setDomeSettingsByView((prev) => ({
       ...prev,
@@ -395,8 +529,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const saved = domeSettingsByView[currentDomeViewKey];
     const normalized = normalizeDomeSettings(saved);
     setDomeRadius(normalized.radius);
-    setDomeThetaStartDeg(normalized.thetaStartDeg);
-    setDomeThetaLengthDeg(normalized.thetaLengthDeg);
     setDomeVerticalOffset(normalized.verticalOffset);
     setDomeRotationY(normalized.rotationY);
     setDomeLightRotationDeg(normalized.lightRotationDeg);
@@ -406,6 +538,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setDomeLightColor(normalized.lightColor);
     setDomeLightDistance(normalized.lightDistance);
     setDomeShadowBias(normalized.shadowBias);
+    setShadowReceiverYOffset(normalized.shadowReceiverYOffset);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
   }, [currentDomeViewKey, domeSettingsByView]);
 
@@ -418,7 +551,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
   const setPositionAndAnglesFromXYZ = (x, y, z) => {
     const nx = Number(x);
-    const ny = Number(y);
+    const ny = editStickToGround ? floorY : Number(y);
     const nz = Number(z);
     if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
 
@@ -428,6 +561,12 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setEditZ(nz);
     setEditRadius(spherical.radius);
   };
+
+  useEffect(() => {
+    if (!editStickToGround) return;
+    setEditY(floorY);
+    setEditPlacement("ground");
+  }, [editStickToGround, floorY]);
 
   const setPositionFromRadius = (nextRadius) => {
     const targetRadius = clamp(Number(nextRadius) || editRadius, 10, domeRadius);
@@ -450,36 +589,87 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setEditZ(nextZ);
   };
 
-  const updateDomeThetaStart = (nextStart) => {
-    const safeStart = clamp(Number(nextStart) || 0, 0, 160);
-    persistDomeSettingsForView({
-      radius: domeRadius,
-      thetaStartDeg: safeStart,
-      thetaLengthDeg: Math.min(domeThetaLengthDeg, 180 - safeStart),
-      verticalOffset: domeVerticalOffset,
-      lightRotationDeg: domeLightRotationDeg,
-      lightStrength: domeLightStrength,
-      lightWorldOpacity: domeLightWorldOpacity,
-      lightBlur: domeLightBlur,
-    });
-  };
+  const applyDomeLightingPreset = (preset) => {
+    if (preset === "interior") {
+      setShadowReceiverEnabled(false);
+      persistDomeSettingsForView({
+        lightStrength: 1.9,
+        lightWorldOpacity: 0.1,
+        lightBlur: 0.72,
+        lightDistance: 1500,
+        shadowBias: -0.0002,
+      });
+      return;
+    }
 
-  const updateDomeThetaLength = (nextLength) => {
+    // Exterior: stronger light and enable a large ground shadow receiver plane.
+    setShadowReceiverEnabled(true);
+    setShadowReceiverOpacity(0.35);
     persistDomeSettingsForView({
-      radius: domeRadius,
-      thetaStartDeg: domeThetaStartDeg,
-      thetaLengthDeg: clamp(Number(nextLength) || 20, 20, 180 - domeThetaStartDeg),
-      verticalOffset: domeVerticalOffset,
-      lightRotationDeg: domeLightRotationDeg,
-      lightStrength: domeLightStrength,
-      lightWorldOpacity: domeLightWorldOpacity,
-      lightBlur: domeLightBlur,
+      lightStrength: 2.45,
+      lightWorldOpacity: 0.24,
+      lightBlur: 0.48,
+      lightDistance: 2500,
+      shadowBias: -0.00012,
     });
   };
 
   useEffect(() => {
     setEditRadius((prev) => clamp(prev, 10, domeRadius));
   }, [domeRadius]);
+
+  useEffect(() => {
+    if (editTipo !== "imagem4p" || !editDialogOpen) {
+      setIsCapturingImage4pPoints(false);
+    }
+  }, [editDialogOpen, editTipo]);
+
+  useEffect(() => {
+    if (!editDialogOpen || !editStickToGround) {
+      setIsPickingGroundPosition(false);
+    }
+  }, [editDialogOpen, editStickToGround]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof editImage4pPreviewUrl === "string" && editImage4pPreviewUrl.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(editImage4pPreviewUrl);
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [editImage4pPreviewUrl]);
+
+  useEffect(() => {
+    if (!editDialogOpen) return;
+    if (editTipo !== "imagem4p") return;
+
+    const encoded = encodeImage4pValue({
+      src: editImage4pPreviewUrl,
+      points: editImage4pPoints,
+      opacity: editImage4pOpacity,
+      brightness: editImage4pBrightness,
+      inset: editImage4pInset,
+      rotateDeg: editImage4pRotateDeg,
+      flipX: editImage4pFlipX,
+      flipY: editImage4pFlipY,
+    });
+
+    setEditConteudo(encoded);
+  }, [
+    editDialogOpen,
+    editTipo,
+    editImage4pPreviewUrl,
+    editImage4pPoints,
+    editImage4pOpacity,
+    editImage4pBrightness,
+    editImage4pInset,
+    editImage4pRotateDeg,
+    editImage4pFlipX,
+    editImage4pFlipY,
+  ]);
 
   const previewHotspots = useMemo(() => {
     if (!editDialogOpen || !selectedHotspot) return hotspots;
@@ -494,16 +684,21 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return hotspots.map((hotspot) => {
       if (hotspot.id !== selectedHotspot.id) return hotspot;
 
+      const previewX = Number(editX);
+      const previewY = editStickToGround ? floorY : Number(editY);
+      const previewZ = Number(editZ);
+
       if (editTipo === "navegacao") {
         const isBack = editNavigationMode === "back";
         return {
           ...hotspot,
-          x: Number(editX),
-          y: Number(editY),
-          z: Number(editZ),
+          x: previewX,
+          y: previewY,
+          z: previewZ,
           rot_yaw: Number(editYaw) || 0,
           rot_pitch: Number(editPitch) || 0,
           scale: Number(editScale),
+          placement: String((editStickToGround ? "ground" : editPlacement) || hotspot.placement || ""),
           tipo: "navegacao",
           conteudo: "",
           navigation_mode: editNavigationMode,
@@ -515,12 +710,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
       return {
         ...hotspot,
-        x: Number(editX),
-        y: Number(editY),
-        z: Number(editZ),
+        x: previewX,
+        y: previewY,
+        z: previewZ,
         rot_yaw: Number(editYaw) || 0,
         rot_pitch: Number(editPitch) || 0,
         scale: Number(editScale),
+        placement: String((editStickToGround ? "ground" : editPlacement) || hotspot.placement || ""),
         tipo: editTipo,
         conteudo: editConteudo,
         id_ponto_destino: "",
@@ -537,14 +733,39 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editX,
     editY,
     editZ,
+    editStickToGround,
+    floorY,
     editYaw,
     editPitch,
     editScale,
+    editPlacement,
     editPontoDestino,
     editNavigationPath,
     editNavigationSelection,
     editNavigationMode,
   ]);
+
+  const warpOverlays = useMemo(() => {
+    return (Array.isArray(previewHotspots) ? previewHotspots : [])
+      .filter((h) => String(h?.tipo || "") === "imagem4p")
+      .map((h) => {
+        const payload = decodeImage4pValue(h?.conteudo);
+        return payload
+          ? {
+            id: h.id,
+            src: payload.src,
+            points: payload.points,
+            opacity: payload.opacity,
+            brightness: payload.brightness,
+            inset: payload.inset,
+            rotateDeg: payload.rotateDeg,
+            flipX: payload.flipX,
+            flipY: payload.flipY,
+          }
+          : null;
+      })
+      .filter(Boolean);
+  }, [previewHotspots]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -595,6 +816,385 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         },
         remove() {
           this.el.removeEventListener("model-loaded", this.recenter);
+        },
+      });
+    }
+
+    if (!AFRAME.components["ground-model-on-dome"]) {
+      AFRAME.registerComponent("ground-model-on-dome", {
+        schema: {
+          centerY: { type: "number", default: 0 },
+          inset: { type: "number", default: 1.5 },
+          contactShadow: { type: "number", default: DEFAULT_MODEL_CONTACT_SHADOW_OPACITY },
+        },
+        init() {
+          this.boundingBox = new THREE.Box3();
+          this.size = new THREE.Vector3();
+          this.parentWorld = new THREE.Vector3();
+          this.center = new THREE.Vector3();
+          this.inward = new THREE.Vector3();
+          this.contactShadowMesh = null;
+          this.applyGrounding = this.applyGrounding.bind(this);
+          this.el.addEventListener("model-loaded", this.applyGrounding);
+          this.applyGrounding();
+        },
+        remove() {
+          this.el.removeEventListener("model-loaded", this.applyGrounding);
+          disposeContactShadowMesh(this.contactShadowMesh);
+          this.contactShadowMesh = null;
+        },
+        applyGrounding() {
+          const mesh = this.el.getObject3D("mesh");
+          if (!mesh) return;
+
+          mesh.updateMatrixWorld(true);
+          this.boundingBox.setFromObject(mesh);
+          if (this.boundingBox.isEmpty()) return;
+
+          this.boundingBox.getSize(this.size);
+
+          const radius = Math.max(this.size.x, this.size.z) * 0.5;
+          const contactShadowRadius = Math.max(MODEL_CONTACT_SHADOW_MIN_RADIUS, radius * MODEL_CONTACT_SHADOW_DOME_SCALE);
+          const contactShadowOpacity = clamp01(
+            this.data.contactShadow,
+            DEFAULT_MODEL_CONTACT_SHADOW_OPACITY
+          );
+          this.contactShadowMesh = applyContactShadow({
+            THREE,
+            entityObject3D: this.el.object3D,
+            mesh: this.contactShadowMesh,
+            opacity: contactShadowOpacity,
+            radius: contactShadowRadius,
+          });
+
+          const parentObject = this.el.parentEl?.object3D;
+          if (parentObject) {
+            parentObject.getWorldPosition(this.parentWorld);
+          } else {
+            this.el.object3D.getWorldPosition(this.parentWorld);
+          }
+
+          this.center.set(0, Number(this.data.centerY) || 0, 0);
+          this.inward.subVectors(this.center, this.parentWorld);
+          if (this.inward.lengthSq() < 1e-6) {
+            this.inward.set(0, 1, 0);
+          } else {
+            this.inward.normalize();
+          }
+
+          this.el.object3D.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.inward);
+
+          const inwardInset = Math.max(0, Number(this.data.inset) || 0);
+          this.el.object3D.position.set(0, inwardInset, 0);
+
+          applyModelShadowFlags(mesh);
+        },
+      });
+    }
+
+    if (!AFRAME.components["ground-model-on-floor"]) {
+      AFRAME.registerComponent("ground-model-on-floor", {
+        schema: {
+          contactShadow: { type: "number", default: DEFAULT_MODEL_CONTACT_SHADOW_OPACITY },
+        },
+        init() {
+          this.boundingBox = new THREE.Box3();
+          this.center = new THREE.Vector3();
+          this.size = new THREE.Vector3();
+          this.appliedOffset = new THREE.Vector3();
+          this.contactShadowMesh = null;
+          this.applyGrounding = this.applyGrounding.bind(this);
+          this.el.addEventListener("model-loaded", this.applyGrounding);
+          this.applyGrounding();
+        },
+        remove() {
+          this.el.removeEventListener("model-loaded", this.applyGrounding);
+          disposeContactShadowMesh(this.contactShadowMesh);
+          this.contactShadowMesh = null;
+        },
+        applyGrounding() {
+          const mesh = this.el.getObject3D("mesh");
+          if (!mesh) return;
+
+          // Remove previous offset before recalculating to avoid cumulative drift.
+          mesh.position.add(this.appliedOffset);
+          this.appliedOffset.set(0, 0, 0);
+
+          mesh.updateMatrixWorld(true);
+          this.boundingBox.setFromObject(mesh);
+          if (this.boundingBox.isEmpty()) return;
+
+          this.boundingBox.getCenter(this.center);
+          this.boundingBox.getSize(this.size);
+          const minY = this.boundingBox.min.y;
+
+          // Pivot at the model base center.
+          mesh.position.x -= this.center.x;
+          mesh.position.z -= this.center.z;
+          mesh.position.y -= minY;
+
+          this.appliedOffset.set(this.center.x, minY, this.center.z);
+
+          const radius = Math.max(this.size.x, this.size.z) * 0.5;
+          const contactShadowRadius = Math.max(MODEL_CONTACT_SHADOW_MIN_RADIUS, radius * MODEL_CONTACT_SHADOW_GROUND_SCALE);
+          const contactShadowOpacity = clamp01(
+            this.data.contactShadow,
+            DEFAULT_MODEL_CONTACT_SHADOW_OPACITY
+          );
+          this.contactShadowMesh = applyContactShadow({
+            THREE,
+            entityObject3D: this.el.object3D,
+            mesh: this.contactShadowMesh,
+            opacity: contactShadowOpacity,
+            radius: contactShadowRadius,
+          });
+
+          applyModelShadowFlags(mesh);
+        },
+      });
+    }
+
+    if (!AFRAME.components["warp-image"]) {
+      AFRAME.registerComponent("warp-image", {
+        schema: {
+          src: { type: "string", default: "" },
+          points: { type: "string", default: "" },
+          opacity: { type: "number", default: 1 },
+          brightness: { type: "number", default: 1 },
+          inset: { type: "number", default: 0.6 },
+          rotateDeg: { type: "number", default: 0 },
+          flipX: { type: "boolean", default: false },
+          flipY: { type: "boolean", default: false },
+          doubleSided: { type: "boolean", default: true },
+        },
+        init() {
+          this._mesh = null;
+          this._geometry = null;
+          this._material = null;
+          this._texture = null;
+          this._textureLoader = new THREE.TextureLoader();
+          this._textureLoader.crossOrigin = "anonymous";
+        },
+        remove() {
+          if (this._mesh) {
+            this.el.removeObject3D("mesh");
+          }
+          this._geometry?.dispose?.();
+          this._material?.dispose?.();
+          this._texture?.dispose?.();
+          this._mesh = null;
+          this._geometry = null;
+          this._material = null;
+          this._texture = null;
+        },
+        update(oldData) {
+          const src = String(this.data.src || "").trim();
+          const encodedPoints = String(this.data.points || "");
+          let points = [];
+
+          if (encodedPoints) {
+            try {
+              const decoded = decodeURIComponent(encodedPoints);
+              const parsed = JSON.parse(decoded);
+              if (Array.isArray(parsed)) {
+                points = parsed
+                  .map((p) => ({
+                    x: Number(p?.x),
+                    y: Number(p?.y),
+                    z: Number(p?.z),
+                  }))
+                  .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+              }
+            } catch {
+              points = [];
+            }
+          }
+
+          const opacity = Math.max(0, Math.min(1, Number(this.data.opacity) || 1));
+          const brightness = Math.max(0, Math.min(5, Number(this.data.brightness) || 1));
+          const inset = Number.isFinite(Number(this.data.inset)) ? Number(this.data.inset) : 0.6;
+          const rotateDeg = Number.isFinite(Number(this.data.rotateDeg)) ? Number(this.data.rotateDeg) : 0;
+          const flipX = Boolean(this.data.flipX);
+          const flipY = Boolean(this.data.flipY);
+          const side = this.data.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+
+          if (!src || points.length < 4) {
+            if (this._mesh) {
+              this.el.removeObject3D("mesh");
+              this._mesh = null;
+            }
+            this._geometry?.dispose?.();
+            this._material?.dispose?.();
+            this._texture?.dispose?.();
+            this._geometry = null;
+            this._material = null;
+            this._texture = null;
+            return;
+          }
+
+          const center = new THREE.Vector3();
+          points.forEach((p) => center.add(new THREE.Vector3(p.x, p.y, p.z)));
+          center.multiplyScalar(1 / points.length);
+
+          // Determine polygon normal using Newell's method.
+          const normal = new THREE.Vector3(0, 0, 0);
+          for (let i = 0; i < points.length; i += 1) {
+            const current = points[i];
+            const next = points[(i + 1) % points.length];
+            normal.x += (current.y - next.y) * (current.z + next.z);
+            normal.y += (current.z - next.z) * (current.x + next.x);
+            normal.z += (current.x - next.x) * (current.y + next.y);
+          }
+          if (normal.lengthSq() < 1e-8) {
+            // Fallback to first 3 points.
+            const p0 = new THREE.Vector3(points[0].x, points[0].y, points[0].z);
+            const p1 = new THREE.Vector3(points[1].x, points[1].y, points[1].z);
+            const p2 = new THREE.Vector3(points[2].x, points[2].y, points[2].z);
+            normal.copy(new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)));
+          }
+          if (normal.lengthSq() < 1e-8) {
+            return;
+          }
+          normal.normalize();
+
+          // Build a stable tangent basis on the plane.
+          const p0 = new THREE.Vector3(points[0].x, points[0].y, points[0].z);
+          const p1 = new THREE.Vector3(points[1].x, points[1].y, points[1].z);
+          const tangent = new THREE.Vector3().subVectors(p1, p0);
+          tangent.addScaledVector(normal, -tangent.dot(normal));
+          if (tangent.lengthSq() < 1e-8) {
+            tangent.set(1, 0, 0);
+            tangent.addScaledVector(normal, -tangent.dot(normal));
+          }
+          tangent.normalize();
+          const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+          const verts2 = points.map((p) => {
+            const v = new THREE.Vector3(p.x, p.y, p.z).sub(center);
+            return new THREE.Vector2(v.dot(tangent), v.dot(bitangent));
+          });
+
+          // Ensure CCW orientation for triangulation.
+          let area = 0;
+          for (let i = 0; i < verts2.length; i += 1) {
+            const a = verts2[i];
+            const b = verts2[(i + 1) % verts2.length];
+            area += (a.x * b.y - b.x * a.y);
+          }
+          if (area < 0) {
+            verts2.reverse();
+            points = [...points].reverse();
+          }
+
+          const triangles = THREE.ShapeUtils.triangulateShape(verts2, []);
+          if (!triangles?.length) return;
+
+          let minX = Infinity;
+          let maxX = -Infinity;
+          let minY = Infinity;
+          let maxY = -Infinity;
+          verts2.forEach((v) => {
+            minX = Math.min(minX, v.x);
+            maxX = Math.max(maxX, v.x);
+            minY = Math.min(minY, v.y);
+            maxY = Math.max(maxY, v.y);
+          });
+          const spanX = Math.max(1e-6, maxX - minX);
+          const spanY = Math.max(1e-6, maxY - minY);
+
+          const positions = new Float32Array(points.length * 3);
+          const uvs = new Float32Array(points.length * 2);
+
+          const angle = (rotateDeg * Math.PI) / 180;
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+
+          for (let i = 0; i < points.length; i += 1) {
+            const p = points[i];
+            const idx3 = i * 3;
+            const idx2 = i * 2;
+            positions[idx3] = p.x - normal.x * inset;
+            positions[idx3 + 1] = p.y - normal.y * inset;
+            positions[idx3 + 2] = p.z - normal.z * inset;
+
+            let u = (verts2[i].x - minX) / spanX;
+            let v = 1 - (verts2[i].y - minY) / spanY;
+
+            if (flipX) u = 1 - u;
+            if (flipY) v = 1 - v;
+
+            if (Math.abs(rotateDeg) > 1e-6) {
+              const du = u - 0.5;
+              const dv = v - 0.5;
+              u = du * cos - dv * sin + 0.5;
+              v = du * sin + dv * cos + 0.5;
+            }
+
+            uvs[idx2] = u;
+            uvs[idx2 + 1] = v;
+          }
+
+          const indices = new Uint16Array(triangles.length * 3);
+          for (let i = 0; i < triangles.length; i += 1) {
+            const tri = triangles[i];
+            indices[i * 3] = tri[0];
+            indices[i * 3 + 1] = tri[1];
+            indices[i * 3 + 2] = tri[2];
+          }
+
+          const buildOrUpdateMesh = (texture) => {
+            this._geometry?.dispose?.();
+            this._material?.dispose?.();
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+            geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+            geometry.computeVertexNormals();
+
+            const material = new THREE.MeshBasicMaterial({
+              map: texture,
+              color: new THREE.Color(1, 1, 1).multiplyScalar(brightness),
+              transparent: true,
+              opacity,
+              side,
+              depthWrite: false,
+              polygonOffset: true,
+              polygonOffsetFactor: -2,
+              polygonOffsetUnits: -2,
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.frustumCulled = false;
+            mesh.renderOrder = 20;
+
+            this._geometry = geometry;
+            this._material = material;
+            this._mesh = mesh;
+            this.el.setObject3D("mesh", mesh);
+          };
+
+          if (!this._texture || oldData?.src !== src) {
+            this._texture?.dispose?.();
+            this._texture = null;
+
+            this._textureLoader.load(
+              src,
+              (tex) => {
+                tex.wrapS = THREE.ClampToEdgeWrapping;
+                tex.wrapT = THREE.ClampToEdgeWrapping;
+                tex.needsUpdate = true;
+                this._texture = tex;
+                buildOrUpdateMesh(tex);
+              },
+              undefined,
+              () => {
+                // ignore load errors; leave empty
+              }
+            );
+          } else {
+            buildOrUpdateMesh(this._texture);
+          }
         },
       });
     }
@@ -778,6 +1378,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           renderer.shadowMap.enabled = true;
           renderer.shadowMap.type = window.THREE?.VSMShadowMap ?? window.THREE?.PCFSoftShadowMap ?? renderer.shadowMap.type;
           renderer.shadowMap.needsUpdate = true;
+          renderer.outputColorSpace = window.THREE?.SRGBColorSpace ?? renderer.outputColorSpace;
+          renderer.toneMapping = window.THREE?.ACESFilmicToneMapping ?? renderer.toneMapping;
+          renderer.toneMappingExposure = 1.0;
           renderer.setClearColor?.(0x000000, 1);
         }
 
@@ -865,7 +1468,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     const onError = (evt) => {
       const message = evt?.detail?.message;
-      setEnvironmentLoadError(message || "Não foi possível carregar o dome 360.");
+      setEnvironmentLoadError(message || "Não foi possível carregar o panorama 360.");
     };
     const onLoaded = () => setEnvironmentLoadError("");
 
@@ -919,12 +1522,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       radius: domeRadius,
       rotationY: domeRotationY,
       opacity: 1,
-      shadowOpacity: Math.max(0.05, Math.min(1, 0.1 + domeLightStrength * 0.18)),
-      model: "/models/Dome.fbx",
-      recenter: false,
-      alignY: "center",
     });
-  }, [domeComponentReady, domeLightStrength, domeRadius, domeRotationY, panoramaKind, panoramaSrc]);
+  }, [domeComponentReady, domeRadius, domeRotationY, panoramaKind, panoramaSrc]);
 
   useEffect(() => {
     const el = document.querySelector('a-text');
@@ -941,6 +1540,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     contrast: 1,
     saturation: 1,
     hue: 0,
+  };
+
+  const defaultModelTransformProps = {
+    position: `${defaultProps.position.x} ${defaultProps.position.y} ${defaultProps.position.z}`,
+    rotation: `${defaultProps.rotation.x} ${defaultProps.rotation.y} ${defaultProps.rotation.z}`,
+    scale: `${defaultProps.scale.x} ${defaultProps.scale.y} ${defaultProps.scale.z}`,
+  };
+
+  const renderModelo3dHotspot = (conteudo, hotspot) => {
+    const currentFloorY = floorY;
+    const { isGround } = getModelHotspotPlacement(hotspot, currentFloorY);
+
+    const groundingAttributes = isGround
+      ? { "ground-model-on-floor": "contactShadow: 0" }
+      : {
+        "center-model-pivot": "",
+        "ground-model-on-dome": `centerY: ${currentFloorY}; inset: 1.6; contactShadow: ${DEFAULT_MODEL_CONTACT_SHADOW_OPACITY}`,
+      };
+
+    return (
+      <a-entity
+        gltf-model={conteudo}
+        position={defaultModelTransformProps.position}
+        rotation={defaultModelTransformProps.rotation}
+        scale={defaultModelTransformProps.scale}
+        shadow="cast: true; receive: true"
+        {...groundingAttributes}
+      />
+    );
   };
 
   const tipoToAFrame = {
@@ -967,15 +1595,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       </a-entity>
     ),
 
-    modelo3d: (conteudo) => (
-      <a-entity
-        gltf-model={conteudo}
-        position={`${defaultProps.position.x} ${defaultProps.position.y} ${defaultProps.position.z}`}
-        rotation={`${defaultProps.rotation.x} ${defaultProps.rotation.y} ${defaultProps.rotation.z}`}
-        scale={`${defaultProps.scale.x} ${defaultProps.scale.y} ${defaultProps.scale.z}`}
-        center-model-pivot
-      />
+    imagem4p: () => (
+      <a-entity>
+        <a-ring radius-inner="5" radius-outer="7" color="#0ea5e9" material="side: double" />
+        <a-text value="Imagem 4p" color="white" width="80" align="center" position="0 9 0" />
+      </a-entity>
     ),
+
+    modelo3d: (conteudo, hotspot) => renderModelo3dHotspot(conteudo, hotspot),
 
     audio: (conteudo) => (
       <a-entity>
@@ -1065,11 +1692,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     ? [
       { label: "Editar Hotspot", value: "edit" },
       { label: "Eliminar Hotspot", value: "delete" },
-      { label: "Editar dome", value: "edit-dome" },
+      { label: "Editar panorama", value: "edit-dome" },
     ]
     : [
       { label: "Criar Hotspot", value: "create" },
-      { label: "Editar dome", value: "edit-dome" },
+      { label: "Editar panorama", value: "edit-dome" },
     ];
 
   const fetchHotspots = async () => {
@@ -1093,6 +1720,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             scale: decodedContent.scale || 1,
             rot_yaw: decodedContent.rotYaw || 0,
             rot_pitch: decodedContent.rotPitch || 0,
+            placement: String(decodedContent.placement || ""),
             tipo: isNavigation ? "navegacao" : (h.tipo || ""),
             conteudo: isNavigation ? "" : decodedContent.value,
             view_path: decodedContent.view,
@@ -1156,6 +1784,36 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     const onClickScene = (e) => {
       if (!enableContextMenu) return;
+      const btn = e?.detail?.mouseEvent?.button ?? 0;
+
+      if (isPickingGroundPosition && editDialogOpen && editStickToGround && btn === 0) {
+        const pointerClientX = Number(e?.clientX ?? e?.detail?.mouseEvent?.clientX);
+        const pointerClientY = Number(e?.clientY ?? e?.detail?.mouseEvent?.clientY);
+        const hit = getIntersectionFromPointer(pointerClientX, pointerClientY);
+        if (hit?.point) {
+          setPositionAndAnglesFromXYZ(hit.point.x, floorY, hit.point.z);
+          setEditPlacement("ground");
+        }
+        return;
+      }
+
+      if (isCapturingImage4pPoints && editDialogOpen && editTipo === "imagem4p" && btn === 0) {
+        const pointerClientX = Number(e?.clientX ?? e?.detail?.mouseEvent?.clientX);
+        const pointerClientY = Number(e?.clientY ?? e?.detail?.mouseEvent?.clientY);
+        const hit = getIntersectionFromPointer(pointerClientX, pointerClientY);
+        if (hit?.point) {
+          const nextPoint = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+          setEditImage4pPoints((prev) => {
+            const base = Array.isArray(prev) ? prev : [];
+            if (base.length === 0) {
+              setPositionAndAnglesFromXYZ(nextPoint.x, nextPoint.y, nextPoint.z);
+            }
+            return [...base, nextPoint];
+          });
+        }
+        return;
+      }
+
       const isHotspot = e.target?.classList?.contains("hotspot-interaction");
       if (!isHotspot) {
         setSelectedHotspot(null);
@@ -1223,7 +1881,166 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         el.removeEventListener("click", handler);
       });
     };
-  }, [enableContextMenu, hotspots, navigateOnHotspot, activeEnvironment, isNavigationTransitioning]);
+  }, [
+    enableContextMenu,
+    hotspots,
+    navigateOnHotspot,
+    activeEnvironment,
+    isNavigationTransitioning,
+    editDialogOpen,
+    editTipo,
+    editStickToGround,
+    isPickingGroundPosition,
+    floorY,
+    isCapturingImage4pPoints,
+    domeRadius,
+    domeVerticalOffset,
+  ]);
+
+  const isImage4pCaptureMode = editDialogOpen && editTipo === "imagem4p" && isCapturingImage4pPoints;
+
+  useEffect(() => {
+    const sceneEl = sceneRef.current;
+    if (!isImage4pCaptureMode || !sceneEl?.canvas) return;
+
+    const canvas = sceneEl.canvas;
+    image4pMagnifierCORSBlockedRef.current = false;
+
+    const handleMove = (event) => {
+      image4pMagnifierPointerRef.current = {
+        clientX: Number(event.clientX) || 0,
+        clientY: Number(event.clientY) || 0,
+        active: true,
+      };
+    };
+
+    const handleEnter = (event) => {
+      image4pMagnifierPointerRef.current = {
+        clientX: Number(event.clientX) || 0,
+        clientY: Number(event.clientY) || 0,
+        active: true,
+      };
+    };
+
+    const handleLeave = () => {
+      image4pMagnifierPointerRef.current = {
+        ...image4pMagnifierPointerRef.current,
+        active: false,
+      };
+    };
+
+    canvas.addEventListener("mousemove", handleMove);
+    canvas.addEventListener("mouseenter", handleEnter);
+    canvas.addEventListener("mouseleave", handleLeave);
+
+    const draw = () => {
+      image4pMagnifierRafRef.current = requestAnimationFrame(draw);
+
+      const overlayCanvas = image4pMagnifierCanvasRef.current;
+      if (!overlayCanvas) return;
+
+      const ctx = overlayCanvas.getContext("2d");
+      if (!ctx) return;
+
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const destCssSize = 220;
+      const destPx = Math.round(destCssSize * dpr);
+
+      if (overlayCanvas.width !== destPx || overlayCanvas.height !== destPx) {
+        overlayCanvas.width = destPx;
+        overlayCanvas.height = destPx;
+        overlayCanvas.style.width = `${destCssSize}px`;
+        overlayCanvas.style.height = `${destCssSize}px`;
+      }
+
+      const pointer = image4pMagnifierPointerRef.current;
+      const cursorBoxEl = image4pMagnifierCursorBoxRef.current;
+      if (cursorBoxEl) {
+        if (!pointer?.active) {
+          cursorBoxEl.style.display = "none";
+        } else {
+          const boxSize = 90;
+          const left = (pointer.clientX - rect.left) - boxSize / 2;
+          const top = (pointer.clientY - rect.top) - boxSize / 2;
+          cursorBoxEl.style.display = "block";
+          cursorBoxEl.style.left = `${left}px`;
+          cursorBoxEl.style.top = `${top}px`;
+          cursorBoxEl.style.width = `${boxSize}px`;
+          cursorBoxEl.style.height = `${boxSize}px`;
+        }
+      }
+
+      // Background
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      ctx.fillStyle = "rgba(0,0,0,0.85)";
+      ctx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+      if (!pointer?.active || image4pMagnifierCORSBlockedRef.current) {
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.font = `${Math.round(12 * dpr)}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const msg = image4pMagnifierCORSBlockedRef.current
+          ? "Zoom indisponível (CORS)"
+          : "Move o rato no 360";
+        ctx.fillText(msg, overlayCanvas.width / 2, overlayCanvas.height / 2);
+        return;
+      }
+
+      // Convert client coords -> canvas internal coords
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const cx = (pointer.clientX - rect.left) * scaleX;
+      const cy = (pointer.clientY - rect.top) * scaleY;
+
+      const srcSize = Math.max(24, Math.round(90 * Math.max(scaleX, scaleY)));
+      const half = srcSize / 2;
+      const sx = Math.max(0, Math.min(canvas.width - srcSize, Math.round(cx - half)));
+      const sy = Math.max(0, Math.min(canvas.height - srcSize, Math.round(cy - half)));
+
+      try {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(canvas, sx, sy, srcSize, srcSize, 0, 0, overlayCanvas.width, overlayCanvas.height);
+      } catch {
+        image4pMagnifierCORSBlockedRef.current = true;
+        return;
+      }
+
+      // Crosshair
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = Math.max(1, Math.round(1 * dpr));
+      ctx.beginPath();
+      ctx.moveTo(overlayCanvas.width / 2, 0);
+      ctx.lineTo(overlayCanvas.width / 2, overlayCanvas.height);
+      ctx.moveTo(0, overlayCanvas.height / 2);
+      ctx.lineTo(overlayCanvas.width, overlayCanvas.height / 2);
+      ctx.stroke();
+
+      // Border
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = Math.max(2, Math.round(2 * dpr));
+      ctx.strokeRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    };
+
+    image4pMagnifierRafRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      canvas.removeEventListener("mousemove", handleMove);
+      canvas.removeEventListener("mouseenter", handleEnter);
+      canvas.removeEventListener("mouseleave", handleLeave);
+      if (image4pMagnifierRafRef.current) {
+        cancelAnimationFrame(image4pMagnifierRafRef.current);
+        image4pMagnifierRafRef.current = null;
+      }
+      image4pMagnifierPointerRef.current = { clientX: 0, clientY: 0, active: false };
+      const cursorBoxEl = image4pMagnifierCursorBoxRef.current;
+      if (cursorBoxEl) cursorBoxEl.style.display = "none";
+    };
+  }, [isImage4pCaptureMode]);
 
   const getPointerRaycaster = (clientX, clientY) => {
     const sceneEl = sceneRef.current;
@@ -1258,6 +2075,60 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return null;
   };
 
+  const getIntersectionFromPointer = (pointerClientX, pointerClientY) => {
+    if (!Number.isFinite(Number(pointerClientX)) || !Number.isFinite(Number(pointerClientY))) return null;
+
+    const raycast = getPointerRaycaster(Number(pointerClientX), Number(pointerClientY));
+    if (!raycast) return null;
+
+    const { THREE, raycaster } = raycast;
+    const floorY = Number(domeVerticalOffset) || 0;
+
+    const candidates = [];
+
+    const groundMesh = groundPlaneRef.current?.getObject3D?.("mesh");
+    if (groundMesh) {
+      const groundHits = raycaster.intersectObject(groundMesh, true);
+      const firstGroundHit = groundHits.find((hit) => hit?.point);
+      if (firstGroundHit?.point) {
+        const point = firstGroundHit.point.clone();
+        point.y = floorY;
+        const horizontal = new THREE.Vector3(point.x, floorY, point.z);
+        const center = new THREE.Vector3(0, floorY, 0);
+        const horizontalDistance = horizontal.distanceTo(center);
+        const maxDistance = Math.max(1, Number(domeRadius) || 1) * 0.98;
+        if (horizontalDistance > maxDistance) {
+          const dir = horizontal.sub(center).normalize();
+          point.x = dir.x * maxDistance;
+          point.z = dir.z * maxDistance;
+        }
+        candidates.push({ point, distance: firstGroundHit.distance, placement: "ground" });
+      }
+    }
+
+    const domeMesh = domeEntityRef.current?.getObject3D?.("mesh");
+    if (domeMesh) {
+      const domeHits = raycaster.intersectObject(domeMesh, true);
+      const firstDomeHit = domeHits.find((hit) => hit?.point);
+      if (firstDomeHit?.point) {
+        candidates.push({ point: firstDomeHit.point.clone(), distance: firstDomeHit.distance, placement: "dome" });
+      }
+    }
+
+    if (candidates.length) {
+      candidates.sort((a, b) => a.distance - b.distance);
+      return { point: candidates[0].point, placement: candidates[0].placement };
+    }
+
+    const sphere = new THREE.Sphere(new THREE.Vector3(0, floorY, 0), domeRadius);
+    const point = new THREE.Vector3();
+    if (raycaster.ray.intersectSphere(sphere, point)) {
+      return { point, placement: "dome" };
+    }
+
+    return null;
+  };
+
   const createHotspot = async () => {
     const event = clickEventRef.current;
     if (!event) return;
@@ -1269,36 +2140,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       return;
     }
 
-    const raycast = getPointerRaycaster(pointerClientX, pointerClientY);
-    if (!raycast) {
-      console.error("THREE.js ou cena ainda não carregados");
+    const hit = getIntersectionFromPointer(pointerClientX, pointerClientY);
+    if (!hit?.point) {
+      console.warn("❌ Sem interseção com o dome/chão");
       return;
     }
 
-    const { THREE, raycaster } = raycast;
-    let intersection = null;
-
-    const domeMesh = domeEntityRef.current?.getObject3D?.("mesh");
-    if (domeMesh) {
-      const domeHits = raycaster.intersectObject(domeMesh, true);
-      const firstDomeHit = domeHits.find((hit) => hit?.point);
-      if (firstDomeHit?.point) {
-        intersection = firstDomeHit.point.clone();
-      }
-    }
-
-    if (!intersection) {
-      const sphere = new THREE.Sphere(new THREE.Vector3(0, Number(domeVerticalOffset) || 0, 0), domeRadius);
-      const point = new THREE.Vector3();
-      if (raycaster.ray.intersectSphere(sphere, point)) {
-        intersection = point;
-      }
-    }
-
-    if (!intersection) {
-      console.warn("❌ Sem interseção com o dome");
-      return;
-    }
+    const intersection = hit.point;
+    const placement = hit.placement;
 
     try {
       const res = await fetch(buildApiUrl("/hotspot/add"), {
@@ -1331,6 +2180,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           scale: 1,
           rot_yaw: 0,
           rot_pitch: 0,
+          placement,
           tipo: hotspotCriado.tipo || "",
           conteudo: hotspotCriado.conteudo || "",
           view_path: activeViewPath,
@@ -1352,12 +2202,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditYaw(Number(hotspotEditavel.rot_yaw) || 0);
         setEditPitch(Number(hotspotEditavel.rot_pitch) || 0);
         setEditScale(Number(hotspotEditavel.scale) || 1);
+        setEditPlacement(String(hotspotEditavel.placement || ""));
+        setEditStickToGround(String(hotspotEditavel.placement || "") === "ground");
         setPositionAndAnglesFromXYZ(hotspotEditavel.x, hotspotEditavel.y, hotspotEditavel.z);
         setEditPontoDestino(hotspotEditavel.id_ponto_destino || "");
         setEditNavigationSelection(null);
         setEditNavigationPath("");
         setEditNavigationMode("file");
         setEditModelSelection(null);
+        setEditImage4pSelection(null);
+        setEditImage4pPreviewUrl("");
+        setEditImage4pPoints([]);
+        setEditImage4pOpacity(1);
+        setEditImage4pBrightness(1);
+        setEditImage4pInset(0.6);
+        setEditImage4pRotateDeg(0);
+        setEditImage4pFlipX(false);
+        setEditImage4pFlipY(false);
+        setIsCapturingImage4pPoints(false);
         setEditDialogOpen(true);
       }
     } catch (err) {
@@ -1535,7 +2397,48 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     }
 
-    const finalConteudo = encodeHotspotContent(finalConteudoRaw, activeViewPath, editScale, editYaw, editPitch);
+    if (editTipo === "imagem4p") {
+      const resolvedImage = await resolveMediaSelection(editImage4pSelection, "media");
+      const resolvedUrl = resolvedImage?.url || "";
+      const finalSrc = resolvedUrl || String(editImage4pPreviewUrl || "").trim();
+
+      if (!finalSrc) {
+        Swal.fire({
+          title: "Imagem em falta",
+          text: "Seleciona ou faz upload de uma imagem para projetar.",
+          icon: "warning",
+          confirmButtonColor: "#171717",
+        });
+        return;
+      }
+
+      if (!Array.isArray(editImage4pPoints) || editImage4pPoints.length < 4) {
+        Swal.fire({
+          title: "Pontos insuficientes",
+          text: "Seleciona pelo menos 4 pontos no 360 para projetar a imagem.",
+          icon: "warning",
+          confirmButtonColor: "#171717",
+        });
+        return;
+      }
+
+      finalConteudoRaw = encodeImage4pValue({
+        src: finalSrc,
+        points: editImage4pPoints,
+        opacity: editImage4pOpacity,
+        brightness: editImage4pBrightness,
+        inset: editImage4pInset,
+        rotateDeg: editImage4pRotateDeg,
+        flipX: editImage4pFlipX,
+        flipY: editImage4pFlipY,
+      });
+    }
+
+    const finalPlacement = editStickToGround ? "ground" : String(editPlacement || selectedHotspot.placement || "");
+    const finalConteudo = encodeHotspotContent(finalConteudoRaw, activeViewPath, editScale, editYaw, editPitch, finalPlacement);
+    const finalX = Number(editX);
+    const finalY = editStickToGround ? floorY : Number(editY);
+    const finalZ = Number(editZ);
 
     try {
       const res = await fetch(buildApiUrl(`/hotspot/${selectedHotspot.id}`), {
@@ -1544,13 +2447,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         body: JSON.stringify({
           tipo: finalTipo,
           conteudo: finalConteudo,
-          x: Number(editX),
-          y: Number(editY),
-          z: Number(editZ),
+          x: finalX,
+          y: finalY,
+          z: finalZ,
         }),
       });
-      if (!res.ok) throw new Error("Erro ao atualizar hotspot");
-      const data = await res.json();
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = data?.details || data?.error || data?.message || `HTTP ${res.status}`;
+        throw new Error(message);
+      }
       console.log("✅ Hotspot atualizado:", data);
       const updatedLocal = {
         id: selectedHotspot.id,
@@ -1558,12 +2465,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         tipo: editTipo,
         conteudo: editTipo === "navegacao" ? "" : finalConteudoRaw,
         view_path: activeViewPath,
-        x: Number(editX),
-        y: Number(editY),
-        z: Number(editZ),
+        x: finalX,
+        y: finalY,
+        z: finalZ,
         rot_yaw: Number(editYaw) || 0,
         rot_pitch: Number(editPitch) || 0,
         scale: Number(editScale),
+        placement: finalPlacement,
         navigation_mode: editTipo === "navegacao" ? editNavigationMode : null,
         id_ponto_destino: finalPontoDestino,
         navigation_file_path: finalNavigationPath,
@@ -1591,7 +2499,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       console.error("❌ Erro ao atualizar hotspot:", err);
       Swal.fire({
         title: "Erro",
-        text: "Erro ao atualizar o hotspot.",
+        text: err?.message || "Erro ao atualizar o hotspot.",
         icon: "error",
         confirmButtonColor: "#171717",
       });
@@ -1616,6 +2524,27 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         cursor="rayOrigin: mouse"
       ></a-camera>
 
+      <a-plane
+        ref={groundPlaneRef}
+        position={`0 ${floorY - 0.05} 0`}
+        rotation="-90 0 0"
+        width={Math.max(1500, Math.ceil(domeRadius * 3))}
+        height={Math.max(1500, Math.ceil(domeRadius * 3))}
+        material="color: #000; opacity: 0; transparent: true; side: double; depthWrite: false; depthTest: false"
+        shadow="cast: false; receive: false"
+      />
+
+      {shadowReceiverEnabled && (
+        <a-plane
+          position={`0 ${floorY - 0.049} 0`}
+          rotation="-90 0 0"
+          width={Math.max(2400, Math.ceil(domeRadius * 4))}
+          height={Math.max(2400, Math.ceil(domeRadius * 4))}
+          material={`shader: shadow; opacity: ${Math.max(0, Math.min(1, Number(shadowReceiverOpacity) || 0.35))}; transparent: true`}
+          shadow="cast: false; receive: true"
+        />
+      )}
+
       <a-entity ref={ambientLightRef} light={`type: ambient; color: #ffffff; intensity: ${Math.max(0, domeLightWorldOpacity)}`} />
       <a-entity
         ref={pointLightRef}
@@ -1631,6 +2560,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
       {panoramaSrc && panoramaKind && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} shadow="cast: false; receive: true" />}
 
+      {warpOverlays.map((overlay) => (
+        <a-entity
+          key={`warp-${overlay.id}`}
+          warp-image={`src: ${overlay.src}; points: ${encodeURIComponent(JSON.stringify(overlay.points || []))}; opacity: ${Number.isFinite(Number(overlay.opacity)) ? overlay.opacity : 1}; brightness: ${Number.isFinite(Number(overlay.brightness)) ? overlay.brightness : 1}; inset: ${Number.isFinite(Number(overlay.inset)) ? overlay.inset : 0.6}; rotateDeg: ${Number.isFinite(Number(overlay.rotateDeg)) ? overlay.rotateDeg : 0}; flipX: ${overlay.flipX ? true : false}; flipY: ${overlay.flipY ? true : false}; doubleSided: true`}
+        />
+      ))}
+
+      {editDialogOpen && editTipo === "imagem4p" && Array.isArray(editImage4pPoints) && editImage4pPoints.map((p, idx) => (
+        <a-sphere
+          key={`img4p-point-${idx}`}
+          position={`${Number(p.x) || 0} ${Number(p.y) || 0} ${Number(p.z) || 0}`}
+          radius="4"
+          color="#ffffff"
+          material="opacity: 0.85; transparent: true"
+          shadow="cast: false; receive: false"
+        />
+      ))}
+
       {previewHotspots.map((pos) => (
         <a-entity
           key={pos.id}
@@ -1644,6 +2591,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           {(!pos.tipo)
             ? <a-sphere position="0 0 0" radius="16" color="red" shadow="cast: true; receive: true" />
             : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
+
+          {editDialogOpen && selectedHotspot?.id === pos.id && (
+            <a-entity face-camera>
+              <a-ring
+                radius-inner="21"
+                radius-outer="23"
+                color="#facc15"
+                material="side: double"
+                animation="property: scale; from: 1 1 1; to: 1.15 1.15 1.15; dur: 800; dir: alternate; loop: true"
+              />
+            </a-entity>
+          )}
 
           <a-plane
             className="clickable hotspot-interaction"
@@ -1662,6 +2621,34 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       ))}
     </a-scene>
   );
+
+  useEffect(() => {
+    if (!editDialogOpen || !selectedHotspot) return;
+    const sceneEl = sceneRef.current;
+    if (!sceneEl || !sceneEl.camera) return;
+
+    const cameraEl = sceneEl.querySelector('a-camera');
+    if (!cameraEl) return;
+
+    const lookControls = cameraEl.components['look-controls'];
+    if (!lookControls) return;
+
+    const THREE = window.THREE;
+    if (!THREE) return;
+
+    const x = Number(editX) || 0;
+    const y = editStickToGround ? floorY : (Number(editY) || 0);
+    const z = Number(editZ) || 0;
+
+    const targetPos = new THREE.Vector3(x, y, z);
+    const dir = new THREE.Vector3().subVectors(targetPos, new THREE.Vector3(0, 0, 0)).normalize();
+
+    const pitch = Math.asin(dir.y);
+    const yaw = Math.atan2(dir.x, dir.z) + Math.PI;
+
+    lookControls.pitchObject.rotation.x = pitch;
+    lookControls.yawObject.rotation.y = yaw;
+  }, [editDialogOpen, selectedHotspot, editX, editY, editZ, editStickToGround, floorY]);
 
   const isWarpOut = isNavigationTransitioning && navigationPhase === "out";
   const isWarpIn = isNavigationTransitioning && navigationPhase === "in";
@@ -1719,6 +2706,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       {environmentLoadError && (
         <div className="absolute top-2 left-2 z-20 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
           {environmentLoadError}
+        </div>
+      )}
+      {isPickingGroundPosition && (
+        <div className="absolute top-2 right-2 z-20 rounded-md bg-black/75 px-3 py-2 text-xs text-white">
+          Modo colocacao no plano ativo: clica no chao para mover o hotspot.
         </div>
       )}
       {editingItem && isAdmin && (
@@ -1896,7 +2888,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           )}
         </div>
       )}
-      <div className="h-full w-full" style={sceneWarpStyle}>
+      <div className="h-full w-full relative" style={sceneWarpStyle}>
         {enableContextMenu ? (
           <ContextMenuWrapper
             onContextMenuCapture={(event) => {
@@ -1918,11 +2910,50 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   setEditYaw(Number(selectedHotspot.rot_yaw) || 0);
                   setEditPitch(Number(selectedHotspot.rot_pitch) || 0);
                   setEditScale(Number(selectedHotspot.scale) || 1);
+                  setEditPlacement(
+                    String(
+                      selectedHotspot.placement
+                      || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "")
+                    )
+                  );
+                  setEditStickToGround(
+                    String(
+                      selectedHotspot.placement
+                      || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "")
+                    ) === "ground"
+                  );
                   setEditModelSelection(
                     selectedHotspot.tipo === "modelo3d" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
                       ? createLibrarySelection(relativePathFromUploadsUrl(selectedHotspot.conteudo || ""))
                       : null
                   );
+
+                  if (selectedHotspot.tipo === "imagem4p") {
+                    const payload = decodeImage4pValue(selectedHotspot.conteudo || "");
+                    const src = payload?.src || "";
+                    setEditImage4pPoints(payload?.points || []);
+                    setEditImage4pOpacity(Number.isFinite(Number(payload?.opacity)) ? Number(payload.opacity) : 1);
+                    setEditImage4pBrightness(Number.isFinite(Number(payload?.brightness)) ? Number(payload.brightness) : 1);
+                    setEditImage4pInset(Number.isFinite(Number(payload?.inset)) ? Number(payload.inset) : 0.6);
+                    setEditImage4pRotateDeg(Number.isFinite(Number(payload?.rotateDeg)) ? Number(payload.rotateDeg) : 0);
+                    setEditImage4pFlipX(Boolean(payload?.flipX));
+                    setEditImage4pFlipY(Boolean(payload?.flipY));
+                    setEditImage4pPreviewUrl(src);
+                    const rel = relativePathFromUploadsUrl(src);
+                    setEditImage4pSelection(rel ? createLibrarySelection(rel) : null);
+                    setIsCapturingImage4pPoints(false);
+                  } else {
+                    setEditImage4pSelection(null);
+                    setEditImage4pPreviewUrl("");
+                    setEditImage4pPoints([]);
+                    setEditImage4pOpacity(1);
+                    setEditImage4pBrightness(1);
+                    setEditImage4pInset(0.6);
+                    setEditImage4pRotateDeg(0);
+                    setEditImage4pFlipX(false);
+                    setEditImage4pFlipY(false);
+                    setIsCapturingImage4pPoints(false);
+                  }
                   setPositionAndAnglesFromXYZ(selectedHotspot.x, selectedHotspot.y, selectedHotspot.z);
                   setEditPontoDestino(selectedHotspot.id_ponto_destino || "");
                   setEditNavigationPath(selectedHotspot.navigation_file_path || "");
@@ -1950,11 +2981,28 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         ) : (
           scene
         )}
+
+        {isImage4pCaptureMode && (
+          <>
+            <div
+              ref={image4pMagnifierCursorBoxRef}
+              className="absolute pointer-events-none rounded-sm border-2 border-white/70 outline outline-1 outline-black/50"
+              style={{ display: "none" }}
+            />
+            <div className="absolute right-3 top-3 pointer-events-none rounded border border-black/30 bg-white/80 p-2">
+              <div className="text-[11px] font-medium text-black mb-1">Zoom</div>
+              <canvas ref={image4pMagnifierCanvasRef} className="block rounded border border-black/20" />
+              <div className="mt-1 text-[10px] text-black/70">
+                Mira no centro e clica para adicionar ponto.
+              </div>
+            </div>
+          </>
+        )}
       </div>
       <CustomDialog
         open={domeDialogOpen}
         onOpenChange={setDomeDialogOpen}
-        title="Editar dome"
+        title="Editar panorama"
         confirmLabel="Fechar"
         cancelLabel="Cancelar"
         onConfirm={() => setDomeDialogOpen(false)}
@@ -1966,122 +3014,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         <div className="flex flex-col gap-2 mt-2">
           <label className="text-sm font-medium">Vista: {currentViewPath || "vista inicial"}</label>
 
-          <label className="text-sm font-medium">Raio: {Math.round(domeRadius)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="300"
-            max={Math.max(1400, Math.ceil(domeRadius))}
-            step="10"
-            value={domeRadius}
-            onChange={(e) => {
-              const nextRadius = parseFloat(e.target.value);
-              if (!Number.isFinite(nextRadius)) return;
-              persistDomeSettingsForView({
-                radius: nextRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
-                verticalOffset: domeVerticalOffset,
-                lightRotationDeg: domeLightRotationDeg,
-                lightStrength: domeLightStrength,
-                lightWorldOpacity: domeLightWorldOpacity,
-                lightBlur: domeLightBlur,
-              });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="10"
-            value={domeRadius}
-            onChange={(e) => {
-              const nextRadius = parseFloat(e.target.value);
-              if (!Number.isFinite(nextRadius)) return;
-              persistDomeSettingsForView({ radius: nextRadius });
-            }}
-          />
-
-          <label className="text-sm font-medium">Posição vertical: {Math.round(domeVerticalOffset)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min={DOME_VERTICAL_OFFSET_MIN}
-            max={Math.max(DOME_VERTICAL_OFFSET_MAX, Math.ceil(domeVerticalOffset))}
-            step="1"
-            value={domeVerticalOffset}
-            onChange={(e) => {
-              const nextOffset = parseFloat(e.target.value);
-              if (!Number.isFinite(nextOffset)) return;
-              persistDomeSettingsForView({
-                radius: domeRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
-                verticalOffset: nextOffset,
-                lightRotationDeg: domeLightRotationDeg,
-                lightStrength: domeLightStrength,
-                lightWorldOpacity: domeLightWorldOpacity,
-                lightBlur: domeLightBlur,
-              });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="1"
-            value={domeVerticalOffset}
-            onChange={(e) => {
-              const nextOffset = parseFloat(e.target.value);
-              if (!Number.isFinite(nextOffset)) return;
-              persistDomeSettingsForView({ verticalOffset: nextOffset });
-            }}
-          />
-
-          <label className="text-sm font-medium">Rotacao do dome (Y): {Math.round(domeRotationY)}°</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="-360"
-            max="360"
-            step="1"
-            value={domeRotationY}
-            onChange={(e) => {
-              const nextRotationY = parseFloat(e.target.value);
-              if (!Number.isFinite(nextRotationY)) return;
-              persistDomeSettingsForView({ rotationY: nextRotationY });
-            }}
-          />
-
-          <label className="text-sm font-medium">Inicio vertical: {Math.round(domeThetaStartDeg)}°</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="0"
-            max="160"
-            step="1"
-            value={domeThetaStartDeg}
-            onChange={(e) => {
-              const nextStart = parseInt(e.target.value, 10);
-              if (!Number.isFinite(nextStart)) return;
-              updateDomeThetaStart(nextStart);
-            }}
-          />
-
-          <label className="text-sm font-medium">Abertura vertical: {Math.round(domeThetaLengthDeg)}°</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="20"
-            max={180 - domeThetaStartDeg}
-            step="1"
-            value={domeThetaLengthDeg}
-            onChange={(e) => {
-              const nextLength = parseInt(e.target.value, 10);
-              if (!Number.isFinite(nextLength)) return;
-              updateDomeThetaLength(nextLength);
-            }}
-          />
-
           <div className="mt-2 border-t border-black/10 pt-2" />
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+              onClick={() => applyDomeLightingPreset("interior")}
+            >
+              Preset Interior
+            </button>
+            <button
+              type="button"
+              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+              onClick={() => applyDomeLightingPreset("exterior")}
+            >
+              Preset Exterior
+            </button>
+          </div>
+
           <label className="text-sm font-medium">Rotacao da luz: {Math.round(domeLightRotationDeg)}°</label>
           <input
             className="w-full accent-black"
@@ -2277,6 +3227,32 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               persistDomeSettingsForView({ shadowBias: nextBias });
             }}
           />
+
+          <label className="text-sm font-medium">Shadow Receiver (cima/baixo): {shadowReceiverYOffset.toFixed(1)}</label>
+          <input
+            className="w-full accent-black"
+            type="range"
+            min="-500"
+            max="500"
+            step="0.1"
+            value={shadowReceiverYOffset}
+            onChange={(e) => {
+              const nextOffset = parseFloat(e.target.value);
+              if (!Number.isFinite(nextOffset)) return;
+              persistDomeSettingsForView({ shadowReceiverYOffset: nextOffset });
+            }}
+          />
+          <input
+            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+            type="number"
+            step="0.1"
+            value={shadowReceiverYOffset}
+            onChange={(e) => {
+              const nextOffset = parseFloat(e.target.value);
+              if (!Number.isFinite(nextOffset)) return;
+              persistDomeSettingsForView({ shadowReceiverYOffset: nextOffset });
+            }}
+          />
         </div>
       </CustomDialog>
       <CustomDialog
@@ -2326,6 +3302,182 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 destinationPath="modelos3d"
                 helperText="Escolhe ou envia um ficheiro GLB/GLTF no File Manager para importar no A-Frame."
               />
+            ) : editTipo === "imagem4p" ? (
+              <div className="flex flex-col gap-2">
+                <MediaSourceField
+                  label="Imagem (warp 4 pontos)"
+                  accept="image/*"
+                  selection={editImage4pSelection}
+                  onChange={(selection) => {
+                    if (typeof editImage4pPreviewUrl === "string" && editImage4pPreviewUrl.startsWith("blob:")) {
+                      try {
+                        URL.revokeObjectURL(editImage4pPreviewUrl);
+                      } catch {
+                        // ignore
+                      }
+                    }
+
+                    setEditImage4pSelection(selection);
+
+                    if (!selection) {
+                      setEditImage4pPreviewUrl("");
+                      return;
+                    }
+
+                    if (selection.source === "library") {
+                      setEditImage4pPreviewUrl(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                      return;
+                    }
+
+                    if (selection.source === "device" && selection.file) {
+                      setEditImage4pPreviewUrl(URL.createObjectURL(selection.file));
+                      return;
+                    }
+
+                    setEditImage4pPreviewUrl("");
+                  }}
+                  destinationPath="media"
+                  helperText="Escolhe ou envia a imagem que queres projetar no outdoor/mupi."
+                />
+
+                <div className="rounded border border-black/10 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">Pontos: {Array.isArray(editImage4pPoints) ? editImage4pPoints.length : 0} (mín. 4)</div>
+                    <button
+                      type="button"
+                      onClick={() => setIsCapturingImage4pPoints((prev) => !prev)}
+                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                    >
+                      {isCapturingImage4pPoints ? "Parar captura" : "Capturar no 360"}
+                    </button>
+                  </div>
+                  {isCapturingImage4pPoints && (
+                    <div className="mt-1 text-xs text-neutral-600">
+                      Clica no 360 para adicionar pontos (em ordem à volta do outdoor).
+                    </div>
+                  )}
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nx = Number(editX);
+                        const ny = Number(editY);
+                        const nz = Number(editZ);
+                        if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
+                        setEditImage4pPoints((prev) => [...(Array.isArray(prev) ? prev : []), { x: nx, y: ny, z: nz }]);
+                      }}
+                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                    >
+                      Adicionar ponto (XYZ atual)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditImage4pPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
+                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                    >
+                      Remover último
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditImage4pPoints([])}
+                      className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium">Opacidade</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={editImage4pOpacity}
+                        onChange={(e) => {
+                          const next = parseFloat(e.target.value);
+                          if (!Number.isFinite(next)) return;
+                          setEditImage4pOpacity(Math.max(0, Math.min(1, next)));
+                        }}
+                        className="w-full accent-black"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium">Brilho: {Number(editImage4pBrightness || 0).toFixed(2)}</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value={editImage4pBrightness}
+                        onChange={(e) => {
+                          const next = parseFloat(e.target.value);
+                          if (!Number.isFinite(next)) return;
+                          setEditImage4pBrightness(Math.max(0, Math.min(5, next)));
+                        }}
+                        className="w-full accent-black"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium">Inset (evitar z-fight)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={editImage4pInset}
+                        onChange={(e) => {
+                          const next = parseFloat(e.target.value);
+                          if (!Number.isFinite(next)) return;
+                          setEditImage4pInset(next);
+                        }}
+                        className="border rounded px-2 py-1 text-sm dark:bg-black"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium">Rotação (°)</label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={editImage4pRotateDeg}
+                        onChange={(e) => {
+                          const next = parseFloat(e.target.value);
+                          if (!Number.isFinite(next)) return;
+                          setEditImage4pRotateDeg(next);
+                        }}
+                        className="border rounded px-2 py-1 text-sm dark:bg-black"
+                      />
+                    </div>
+
+                    <div className="flex items-end">
+                      <label className="flex items-center gap-2 text-xs font-medium">
+                        <input
+                          type="checkbox"
+                          checked={editImage4pFlipX}
+                          onChange={(e) => setEditImage4pFlipX(Boolean(e.target.checked))}
+                          className="accent-black"
+                        />
+                        Espelhar H
+                      </label>
+                    </div>
+
+                    <div className="flex items-end">
+                      <label className="flex items-center gap-2 text-xs font-medium">
+                        <input
+                          type="checkbox"
+                          checked={editImage4pFlipY}
+                          onChange={(e) => setEditImage4pFlipY(Boolean(e.target.checked))}
+                          className="accent-black"
+                        />
+                        Espelhar V
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
             ) : (
               <input
                 type="text"
@@ -2351,35 +3503,76 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               className="w-full accent-black"
             />
 
-            <label className="text-sm font-medium">Posição Y: {(Number(editY) || 0).toFixed(1)}</label>
+            <label className="inline-flex items-center gap-2 text-sm font-medium mt-2">
+              <input
+                type="checkbox"
+                checked={editStickToGround}
+                onChange={(e) => {
+                  const enabled = Boolean(e.target.checked);
+                  setEditStickToGround(enabled);
+                  if (enabled) {
+                    setPositionAndAnglesFromXYZ(editX, floorY, editZ);
+                  }
+                }}
+                className="accent-black"
+              />
+              Stick to ground
+            </label>
+
+            {editStickToGround && (
+              <div className="rounded border border-black/10 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-neutral-700">Clica no plano para posicionar rapidamente.</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsPickingGroundPosition((prev) => !prev)}
+                    className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                  >
+                    {isPickingGroundPosition ? "Parar colocacao" : "Colocar no plano"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <label className="text-sm font-medium">
+              {editStickToGround ? "Posição Y (plano):" : "Posição Y:"} {editStickToGround ? (Number(editZ) || 0).toFixed(1) : (Number(editY) || 0).toFixed(1)}
+            </label>
             <input
               type="range"
               min={positionSliderMin}
               max={positionSliderMax}
               step="0.1"
-              value={Number(editY) || 0}
+              value={editStickToGround ? (Number(editZ) || 0) : (Number(editY) || 0)}
               onChange={(e) => {
                 const next = parseFloat(e.target.value);
                 if (!Number.isFinite(next)) return;
+                if (editStickToGround) {
+                  setPositionAndAnglesFromXYZ(editX, floorY, next);
+                  return;
+                }
                 setPositionAndAnglesFromXYZ(editX, next, editZ);
               }}
               className="w-full accent-black"
             />
 
-            <label className="text-sm font-medium">Posição Z: {(Number(editZ) || 0).toFixed(1)}</label>
-            <input
-              type="range"
-              min={positionSliderMin}
-              max={positionSliderMax}
-              step="0.1"
-              value={Number(editZ) || 0}
-              onChange={(e) => {
-                const next = parseFloat(e.target.value);
-                if (!Number.isFinite(next)) return;
-                setPositionAndAnglesFromXYZ(editX, editY, next);
-              }}
-              className="w-full accent-black"
-            />
+            {!editStickToGround && (
+              <>
+                <label className="text-sm font-medium">Posição Z: {(Number(editZ) || 0).toFixed(1)}</label>
+                <input
+                  type="range"
+                  min={positionSliderMin}
+                  max={positionSliderMax}
+                  step="0.1"
+                  value={Number(editZ) || 0}
+                  onChange={(e) => {
+                    const next = parseFloat(e.target.value);
+                    if (!Number.isFinite(next)) return;
+                    setPositionAndAnglesFromXYZ(editX, editY, next);
+                  }}
+                  className="w-full accent-black"
+                />
+              </>
+            )}
 
             <label className="text-sm font-medium mt-2">Rotação horizontal (Yaw): {Math.round(editYaw)}°</label>
             <input

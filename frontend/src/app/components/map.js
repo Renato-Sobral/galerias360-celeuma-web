@@ -1103,6 +1103,7 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [], existingPo
                             required
                         />
                     </div>
+
                     {error && <div className="text-red-600 text-sm sm:col-span-2">{error}</div>}
                     <button
                         type="submit"

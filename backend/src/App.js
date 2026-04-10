@@ -18,6 +18,7 @@ const mapOverlayRoutes = require('./routes/mapOverlayRoutes');
 const themeRoutes = require('./routes/themeRoutes');
 const categoriaPontoRoutes = require('./routes/categoriaPontoRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const editorStateRoutes = require('./routes/editorStateRoutes');
 const { PRIMARY_UPLOADS_ROOT, LEGACY_UPLOADS_ROOT } = require('./utils/mediaLibrary');
 const { seedDefaultThemePresets } = require('./services/themePresetDefaults');
 //const estatistica = require('./models/estatistica');
@@ -88,6 +89,7 @@ app.use('/overlay', mapOverlayRoutes);
 app.use('/theme', themeRoutes);
 app.use('/categoria', categoriaPontoRoutes);
 app.use('/media', mediaRoutes);
+app.use('/editor', editorStateRoutes);
 
 io.on("connection", (socket) => {
   console.log(`🔗 Cliente conectado: ${socket.id}`);

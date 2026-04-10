@@ -18,11 +18,11 @@ const Hotspot = sequelize.define('hotspots', {
     onDelete: 'CASCADE',
   },
   tipo: {
-    type: DataTypes.ENUM('texto', 'imagem', 'modelo3d', 'audio', 'audioespacial', 'video', 'link'),
+    type: DataTypes.ENUM('texto', 'imagem', 'imagem4p', 'modelo3d', 'audio', 'audioespacial', 'video', 'link'),
     allowNull: true,
   },
   conteudo: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT,
     allowNull: true,
   },
   x: {

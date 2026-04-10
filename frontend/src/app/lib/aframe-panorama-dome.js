@@ -1,12 +1,11 @@
 "use client";
 
-// Registers an A-Frame component that renders the panorama on an FBX dome model.
+// Registers an A-Frame component that renders the panorama on a sphere mesh.
 // Expected usage:
-// <a-entity panorama-dome="src: /uploads/foo.jpg; kind: image; radius: 700; rotationY: -90; model: /models/Dome.fbx"></a-entity>
+// <a-entity panorama-dome="src: /uploads/foo.jpg; kind: image; radius: 700; rotationY: -90"></a-entity>
 //
 // Notes:
 // - This relies on A-Frame injecting THREE onto window.
-// - The FBX file must be reachable by the browser (e.g. placed in `frontend/public/models/Dome.fbx`).
 
 export async function ensurePanoramaDomeComponent() {
     if (typeof window === "undefined") return;
@@ -17,8 +16,7 @@ export async function ensurePanoramaDomeComponent() {
 
     if (AFRAME.components["panorama-dome"]) return;
 
-    const [{ FBXLoader }, { RGBELoader }, { EXRLoader }] = await Promise.all([
-        import("three/examples/jsm/loaders/FBXLoader.js"),
+    const [{ RGBELoader }, { EXRLoader }] = await Promise.all([
         import("three/examples/jsm/loaders/RGBELoader.js"),
         import("three/examples/jsm/loaders/EXRLoader.js"),
     ]);
@@ -46,52 +44,37 @@ export async function ensurePanoramaDomeComponent() {
 
     const disposeObject3DDeep = (root) => {
         if (!root) return;
-
         root.traverse?.((child) => {
             if (!child) return;
+            if (!child.isMesh) return;
 
-            if (child.isMesh) {
-                if (child.geometry) {
-                    try {
-                        child.geometry.dispose?.();
-                    } catch {
-                        // ignore
-                    }
+            if (child.geometry) {
+                try {
+                    child.geometry.dispose?.();
+                } catch {
+                    // ignore
                 }
+            }
 
-                const material = child.material;
-                if (Array.isArray(material)) {
-                    material.forEach((mat) => {
-                        if (mat?.map) disposeTexture(mat.map);
-                        try {
-                            mat?.dispose?.();
-                        } catch {
-                            // ignore
-                        }
-                    });
-                } else if (material) {
-                    if (material.map) disposeTexture(material.map);
+            const material = child.material;
+            if (Array.isArray(material)) {
+                material.forEach((mat) => {
+                    if (mat?.map) disposeTexture(mat.map);
                     try {
-                        material.dispose?.();
+                        mat?.dispose?.();
                     } catch {
                         // ignore
                     }
+                });
+            } else if (material) {
+                if (material.map) disposeTexture(material.map);
+                try {
+                    material.dispose?.();
+                } catch {
+                    // ignore
                 }
             }
         });
-    };
-
-    const computeHorizontalScaleForRadius = (object3D, radius) => {
-        const safeRadius = Number.isFinite(Number(radius)) ? Number(radius) : 700;
-
-        const box = new THREE.Box3().setFromObject(object3D);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-
-        const maxHorizontalDim = Math.max(size.x, size.z);
-        const baseRadius = maxHorizontalDim > 0.0001 ? maxHorizontalDim / 2 : 1;
-
-        return safeRadius / baseRadius;
     };
 
     const applyTextureWrapping = (texture) => {
@@ -112,30 +95,35 @@ export async function ensurePanoramaDomeComponent() {
                 opacity: { value: safeOpacity },
             },
             vertexShader: `
+                #include <common>
+                #include <logdepthbuf_pars_vertex>
         varying vec3 vWorldDir;
         void main() {
-          vec4 worldPos = modelMatrix * vec4(position, 1.0);
-          vWorldDir = normalize(worldPos.xyz);
-          gl_Position = projectionMatrix * viewMatrix * worldPos;
+                    vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+                    vec3 worldCenter = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+                    vWorldDir = normalize(worldPos - worldCenter);
+                    gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+                    #include <logdepthbuf_vertex>
         }
       `,
             fragmentShader: `
+                #include <common>
+                #include <logdepthbuf_pars_fragment>
         precision highp float;
         uniform sampler2D map;
         uniform float opacity;
         varying vec3 vWorldDir;
-
-        const float PI = 3.1415926535897932384626433832795;
 
         void main() {
           vec3 dir = normalize(vWorldDir);
           // Equirectangular projection.
           float u = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
                     float v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / PI;
-                    // Some dome FBX meshes end up with inverted vertical direction; flip V so sky is up.
+                    // Flip V so the sky is up.
                     v = 1.0 - v;
           vec4 color = texture2D(map, vec2(u, v));
           gl_FragColor = vec4(color.rgb, color.a * opacity);
+                    #include <logdepthbuf_fragment>
         }
       `,
             side: THREE.DoubleSide,
@@ -179,40 +167,33 @@ export async function ensurePanoramaDomeComponent() {
 
     AFRAME.registerComponent("panorama-dome", {
         schema: {
-            model: { type: "string", default: "/models/Dome.fbx" },
             src: { type: "string", default: "" },
             kind: { type: "string", default: "image" }, // image | video | hdr
             projection: { type: "string", default: "spherical" }, // spherical | uv
-            alignY: { type: "string", default: "floor" }, // floor | center
-            recenter: { type: "boolean", default: true },
             radius: { type: "number", default: 700 },
             rotationY: { type: "number", default: -90 },
             opacity: { type: "number", default: 1 },
-            shadowOpacity: { type: "number", default: 0.68 },
         },
 
         init() {
             this._isDisposed = false;
-            this._fbxLoader = new FBXLoader();
             this._textureLoader = new THREE.TextureLoader();
             this._rgbeLoader = new RGBELoader();
             this._exrLoader = new EXRLoader();
-            this._shadowReceivers = [];
 
             // Match A-Frame's common asset loading behavior.
             try {
                 this._textureLoader.setCrossOrigin?.("anonymous");
                 this._rgbeLoader.setCrossOrigin?.("anonymous");
                 this._exrLoader.setCrossOrigin?.("anonymous");
-                this._fbxLoader.setCrossOrigin?.("anonymous");
             } catch {
                 // ignore
             }
 
-            this._modelObject = null;
+            this._sphereMesh = null;
             this._currentTexture = null;
             this._currentVideoTexture = null;
-            this._lastApplied = { model: "", src: "", kind: "", radius: 0, rotationY: 0, opacity: 1, shadowOpacity: 0.68 };
+            this._lastApplied = { src: "", kind: "", radius: 0, rotationY: 0, opacity: 1 };
 
             // A-Frame might cull large meshes aggressively; keep it safe.
             this.el.object3D.frustumCulled = false;
@@ -222,47 +203,42 @@ export async function ensurePanoramaDomeComponent() {
             if (this._isDisposed) return;
 
             const data = this.data;
-            const needsModelReload = !this._modelObject || data.model !== this._lastApplied.model;
+            const needsModelReload = !this._sphereMesh;
 
             try {
                 if (needsModelReload) {
-                    await this._loadModel(data.model);
+                    await this._loadModel();
                 }
 
                 // Always re-apply transforms if the radius/rotation changed.
-                if (this._modelObject) {
-                    const scaleXZ = computeHorizontalScaleForRadius(this._modelObject, data.radius);
-                    // Keep vertical scale stable; radius should only affect width/depth.
-                    const fixedY = Number.isFinite(this._modelObject.scale.y) ? this._modelObject.scale.y : 1;
-                    this._modelObject.scale.set(scaleXZ, fixedY, scaleXZ);
-                    this._modelObject.rotation.y = THREE.MathUtils.degToRad(Number(data.rotationY) || 0);
+                if (this._sphereMesh) {
+                    const safeRadius = Number.isFinite(Number(data.radius)) ? Number(data.radius) : 700;
+                    this._sphereMesh.scale.set(safeRadius, safeRadius, safeRadius);
+                    this._sphereMesh.rotation.y = THREE.MathUtils.degToRad(Number(data.rotationY) || 0);
                 }
 
                 const needsTextureReload =
                     data.src !== this._lastApplied.src ||
                     data.kind !== this._lastApplied.kind ||
                     data.opacity !== this._lastApplied.opacity ||
-                    data.shadowOpacity !== this._lastApplied.shadowOpacity ||
                     needsModelReload;
 
-                if (needsTextureReload && this._modelObject) {
+                if (needsTextureReload && this._sphereMesh) {
                     const texture = await this._loadTexture(data.kind, data.src);
-                    await this._applyTexture(texture, data.opacity, data.shadowOpacity);
+                    await this._applyTexture(texture, data.opacity);
                 }
 
                 this._lastApplied = {
-                    model: data.model,
                     src: data.src,
                     kind: data.kind,
                     radius: data.radius,
                     rotationY: data.rotationY,
                     opacity: data.opacity,
-                    shadowOpacity: data.shadowOpacity,
                 };
 
                 this.el.emit("panorama-dome-loaded", { ok: true }, false);
             } catch (error) {
-                const message = error instanceof Error ? error.message : "Falha ao carregar o dome 360.";
+                const message = error instanceof Error ? error.message : "Falha ao carregar o panorama 360.";
                 this.el.emit("panorama-dome-error", { message }, false);
             }
         },
@@ -270,14 +246,18 @@ export async function ensurePanoramaDomeComponent() {
         remove() {
             this._isDisposed = true;
 
-            this._clearShadowReceivers();
-
-            if (this._modelObject && this._modelObject.parent) {
-                this._modelObject.parent.remove(this._modelObject);
+            if (this._sphereMesh && this._sphereMesh.parent) {
+                this._sphereMesh.parent.remove(this._sphereMesh);
             }
-
-            disposeObject3DDeep(this._modelObject);
-            this._modelObject = null;
+            if (this._sphereMesh?.geometry) {
+                try {
+                    this._sphereMesh.geometry.dispose?.();
+                } catch {
+                    // ignore
+                }
+            }
+            disposeMaterial(this._sphereMesh?.material);
+            this._sphereMesh = null;
 
             disposeTexture(this._currentTexture);
             this._currentTexture = null;
@@ -286,85 +266,31 @@ export async function ensurePanoramaDomeComponent() {
             this._currentVideoTexture = null;
         },
 
-        _clearShadowReceivers() {
-            if (!Array.isArray(this._shadowReceivers) || this._shadowReceivers.length === 0) return;
-
-            this._shadowReceivers.forEach((receiver) => {
-                if (!receiver) return;
-                if (receiver.parent) {
-                    receiver.parent.remove(receiver);
-                }
-                disposeMaterial(receiver.material);
-            });
-
-            this._shadowReceivers = [];
-        },
-
-        async _loadModel(modelUrl) {
-            if (this._modelObject && this._modelObject.parent) {
-                this._modelObject.parent.remove(this._modelObject);
+        async _loadModel() {
+            if (this._sphereMesh && this._sphereMesh.parent) {
+                this._sphereMesh.parent.remove(this._sphereMesh);
             }
-            disposeObject3DDeep(this._modelObject);
-            this._modelObject = null;
-
-            const safeUrl = String(modelUrl || "");
-            if (!safeUrl) throw new Error("Caminho do modelo FBX não definido.");
-
-            const object = await new Promise((resolve, reject) => {
-                this._fbxLoader.load(
-                    safeUrl,
-                    (loaded) => resolve(loaded),
-                    undefined,
-                    () => reject(new Error("Não foi possível carregar o modelo FBX do dome."))
-                );
-            });
-
-            if (this._isDisposed) {
-                disposeObject3DDeep(object);
-                return;
-            }
-
-            if (this.data?.recenter !== false) {
-                // Recenter the model around the camera.
-                // Default behavior keeps Y "floor-like" for hemisphere meshes (minY≈0).
-                // If alignY is "center", we also recenter vertically.
+            if (this._sphereMesh?.geometry) {
                 try {
-                    const box = new THREE.Box3().setFromObject(object);
-                    const center = new THREE.Vector3();
-                    const size = new THREE.Vector3();
-                    box.getCenter(center);
-                    box.getSize(size);
-
-                    // Always recenter horizontally.
-                    object.position.x -= center.x;
-                    object.position.z -= center.z;
-
-                    const alignY = String(this.data?.alignY || "floor").toLowerCase();
-
-                    if (alignY === "center") {
-                        object.position.y -= center.y;
-                    } else {
-                        // If the model already sits on/above y=0, keep y as-is.
-                        // Otherwise (e.g. full sphere), recenter vertically too.
-                        const height = Math.max(1e-6, size.y);
-                        const minY = box.min.y;
-                        const isDomeLike = minY >= -0.01 * height;
-                        if (!isDomeLike) {
-                            object.position.y -= center.y;
-                        }
-                    }
+                    this._sphereMesh.geometry.dispose?.();
                 } catch {
                     // ignore
                 }
             }
+            disposeMaterial(this._sphereMesh?.material);
+            this._sphereMesh = null;
 
-            object.traverse((child) => {
-                if (!child?.isMesh) return;
-                child.frustumCulled = false;
+            const geometry = new THREE.SphereGeometry(1, 64, 40);
+            const material = new THREE.MeshBasicMaterial({
+                side: THREE.BackSide,
+                transparent: false,
+                opacity: 1,
+                depthWrite: true,
             });
-
-            this.el.object3D.add(object);
-            this._modelObject = object;
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.frustumCulled = false;
+            this.el.object3D.add(mesh);
+            this._sphereMesh = mesh;
         },
 
         async _loadTexture(kind, src) {
@@ -433,15 +359,13 @@ export async function ensurePanoramaDomeComponent() {
             return texture;
         },
 
-        async _applyTexture(texture, opacity, shadowOpacity) {
-            if (!this._modelObject) return;
+        async _applyTexture(texture, opacity) {
+            if (!this._sphereMesh) return;
             if (!texture) return;
 
             const safeOpacity = 1;
             const transparent = false;
             const projection = String(this.data?.projection || "spherical").toLowerCase();
-
-            this._clearShadowReceivers();
 
             const buildMaterial = () => {
                 if (projection === "uv") {
@@ -458,31 +382,12 @@ export async function ensurePanoramaDomeComponent() {
                 return makeEquirectShaderMaterial(texture, safeOpacity);
             };
 
-            const domeMeshes = [];
-            this._modelObject.traverse((child) => {
-                if (!child?.isMesh) return;
-                domeMeshes.push(child);
-            });
 
-            domeMeshes.forEach((child) => {
-                if (!child?.isMesh) return;
-
-                disposeMaterial(child.material);
-                child.material = buildMaterial();
-                child.castShadow = false;
-                child.receiveShadow = false;
-                child.renderOrder = -100; // Put dome rendering before other objects to occlude what's outside
-
-                // Dedicated shadow receiver mesh so shadows are visible even with unlit/shader panorama materials.
-                const shadowReceiver = new THREE.Mesh(child.geometry, makeShadowReceiverMaterial());
-                shadowReceiver.material.opacity = Math.min(1, Math.max(0, Number(shadowOpacity) || 0.68));
-                shadowReceiver.frustumCulled = false;
-                shadowReceiver.castShadow = false;
-                shadowReceiver.receiveShadow = true;
-                shadowReceiver.renderOrder = -99;
-                child.add(shadowReceiver);
-                this._shadowReceivers.push(shadowReceiver);
-            });
+            disposeMaterial(this._sphereMesh.material);
+            this._sphereMesh.material = buildMaterial();
+            this._sphereMesh.castShadow = false;
+            this._sphereMesh.receiveShadow = false;
+            this._sphereMesh.renderOrder = -100;
         },
     });
 }

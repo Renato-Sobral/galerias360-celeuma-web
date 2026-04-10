@@ -1,39 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import 'aframe';
 import { ensurePanoramaDomeComponent } from "../../../lib/aframe-panorama-dome";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function Editor360({ file }) {
+export default function Editor360({ file, initialSettings, onSave }) {
   const sceneRef = useRef(null);
-  const domeEntityRef = useRef(null);
-  const [domeComponentReady, setDomeComponentReady] = useState(false);
-  const DEFAULT_PANORAMA_DOME_RADIUS = 700;
-  const DEFAULT_PANORAMA_DOME_THETA_START_DEG = 0;
-  const DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG = 90;
+  const panoramaEntityRef = useRef(null);
+  const [panoramaComponentReady, setPanoramaComponentReady] = useState(false);
+  const DEFAULT_PANORAMA_RADIUS = 700;
   const [imgURL, setImgURL] = useState(null);
+  const [loadingImage, setLoadingImage] = useState(false);
   const [environmentError, setEnvironmentError] = useState("");
   const [brightness, setBrightness] = useState(1);
   const [contrast, setContrast] = useState(1);
   const [saturation, setSaturation] = useState(1);
   const [hue, setHue] = useState(0);
-  const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
-  const [domeThetaStartDeg, setDomeThetaStartDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_START_DEG);
-  const [domeThetaLengthDeg, setDomeThetaLengthDeg] = useState(DEFAULT_PANORAMA_DOME_THETA_LENGTH_DEG);
-  const [domeVerticalOffset, setDomeVerticalOffset] = useState(0);
+  const [panoramaRadius, setPanoramaRadius] = useState(DEFAULT_PANORAMA_RADIUS);
+  const [panoramaVerticalOffset, setPanoramaVerticalOffset] = useState(0);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
   const isHdrOrExrFile = /\.(hdr|exr)$/i.test(String(file?.name || ""));
-  const domeThetaStartRad = useMemo(() => (domeThetaStartDeg * Math.PI) / 180, [domeThetaStartDeg]);
-  const domeThetaLengthRad = useMemo(() => (domeThetaLengthDeg * Math.PI) / 180, [domeThetaLengthDeg]);
-  const domeThetaEndRad = useMemo(() => {
-    const end = domeThetaStartRad + domeThetaLengthRad;
-    return Math.min(Math.PI, Math.max(0, end));
-  }, [domeThetaLengthRad, domeThetaStartRad]);
-  const domeFloorY = useMemo(() => domeRadius * Math.cos(domeThetaEndRad), [domeRadius, domeThetaEndRad]);
-  const domeFloorRadius = useMemo(() => Math.max(40, domeRadius * Math.sin(domeThetaEndRad)), [domeRadius, domeThetaEndRad]);
-  const domeFloorMaterial = useMemo(() => {
-    if (!isHdrOrExrFile && imgURL) {
-      return "shader: flat; src: #panorama; side: double; transparent: true; opacity: 0.98";
-    }
-    return "side: double; transparent: true; opacity: 0.92; roughness: 1; metalness: 0";
-  }, [imgURL, isHdrOrExrFile]);
+
+  useEffect(() => {
+    if (!initialSettings || typeof initialSettings !== "object") return;
+
+    setBrightness(Number.isFinite(Number(initialSettings.brightness)) ? Number(initialSettings.brightness) : 1);
+    setContrast(Number.isFinite(Number(initialSettings.contrast)) ? Number(initialSettings.contrast) : 1);
+    setSaturation(Number.isFinite(Number(initialSettings.saturation)) ? Number(initialSettings.saturation) : 1);
+    setHue(Number.isFinite(Number(initialSettings.hue)) ? Number(initialSettings.hue) : 0);
+    setPanoramaRadius(Number.isFinite(Number(initialSettings.panoramaRadius)) ? Number(initialSettings.panoramaRadius) : DEFAULT_PANORAMA_RADIUS);
+    setPanoramaVerticalOffset(Number.isFinite(Number(initialSettings.panoramaVerticalOffset)) ? Number(initialSettings.panoramaVerticalOffset) : 0);
+  }, [initialSettings, file]);
 
   useEffect(() => {
     let mounted = true;
@@ -43,7 +42,7 @@ export default function Editor360({ file }) {
       })
       .finally(() => {
         if (!mounted) return;
-        setDomeComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
+        setPanoramaComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
       });
 
     return () => {
@@ -52,12 +51,12 @@ export default function Editor360({ file }) {
   }, []);
 
   useEffect(() => {
-    const el = domeEntityRef.current;
+    const el = panoramaEntityRef.current;
     if (!el) return;
 
     const onError = (evt) => {
       const message = evt?.detail?.message;
-      setEnvironmentError(message || "Nao foi possivel carregar o dome no editor.");
+      setEnvironmentError(message || "Nao foi possivel carregar o panorama no editor.");
     };
     const onLoaded = () => setEnvironmentError("");
 
@@ -70,30 +69,30 @@ export default function Editor360({ file }) {
   }, [imgURL, isHdrOrExrFile]);
 
   useEffect(() => {
-    const el = domeEntityRef.current;
+    const el = panoramaEntityRef.current;
     if (!el) return;
     if (!imgURL) return;
-    if (!domeComponentReady) return;
+    if (!panoramaComponentReady) return;
 
     el.setAttribute("panorama-dome", {
       kind: isHdrOrExrFile ? "hdr" : "image",
       src: imgURL,
-      radius: domeRadius,
+      radius: panoramaRadius,
       rotationY: -90,
       opacity: 1,
-      alignY: "center",
-      model: "/models/Dome.fbx",
     });
-  }, [domeComponentReady, domeRadius, imgURL, isHdrOrExrFile]);
+  }, [imgURL, isHdrOrExrFile, panoramaComponentReady, panoramaRadius]);
 
   useEffect(() => {
     if (!file) return;
 
     const url = URL.createObjectURL(file);
     setEnvironmentError("");
+    setLoadingImage(true);
 
     if (isHdrOrExrFile) {
       setImgURL(url);
+      setLoadingImage(false);
       return () => {
         URL.revokeObjectURL(url);
         setImgURL(null);
@@ -105,6 +104,11 @@ export default function Editor360({ file }) {
     img.src = url;
     img.onload = () => {
       setImgURL(url); // só atualiza quando a imagem estiver pronta
+      setLoadingImage(false);
+    };
+    img.onerror = () => {
+      setEnvironmentError("Nao foi possivel carregar a imagem selecionada.");
+      setLoadingImage(false);
     };
 
     return () => {
@@ -112,6 +116,39 @@ export default function Editor360({ file }) {
       setImgURL(null);
     };
   }, [file, isHdrOrExrFile]);
+
+  const resetGrading = () => {
+    setBrightness(1);
+    setContrast(1);
+    setSaturation(1);
+    setHue(0);
+    setPanoramaRadius(DEFAULT_PANORAMA_RADIUS);
+    setPanoramaVerticalOffset(0);
+  };
+
+  const handleSave = async () => {
+    if (!onSave) return;
+
+    setSaveLoading(true);
+    setSaveMessage("");
+    setSaveError("");
+
+    try {
+      await onSave({
+        brightness,
+        contrast,
+        saturation,
+        hue,
+        panoramaRadius,
+        panoramaVerticalOffset,
+      });
+      setSaveMessage("Edicoes guardadas.");
+    } catch (err) {
+      setSaveError(err?.message || "Nao foi possivel guardar as edicoes.");
+    } finally {
+      setSaveLoading(false);
+    }
+  };
 
   // HDR/EXR and images are now handled by the panorama-dome A-Frame component.
 
@@ -167,103 +204,107 @@ export default function Editor360({ file }) {
   }, []);
 
   return (
-    <div style={{ display: "flex" }}>
-      <div style={{ width: "800px", height: "600px", position: 'relative' }}>
-        {environmentError && (
-          <div style={{ position: "absolute", top: 8, left: 8, zIndex: 20, background: "#fef2f2", color: "#b91c1c", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
-            {environmentError}
+    <div className="grid gap-4 xl:gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle>Visualizador 360</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="relative h-[54vh] min-h-[420px] max-h-[780px] w-full overflow-hidden rounded-lg border border-border bg-black">
+            {loadingImage && (
+              <div style={{ position: "absolute", top: 8, left: 8, zIndex: 20, background: "#f3f4f6", color: "#111827", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
+                A carregar panorama...
+              </div>
+            )}
+            {environmentError && (
+              <div style={{ position: "absolute", top: loadingImage ? 40 : 8, left: 8, zIndex: 20, background: "#fef2f2", color: "#b91c1c", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
+                {environmentError}
+              </div>
+            )}
+            <a-scene
+              ref={sceneRef}
+              embedded
+              vr-mode-ui="enabled: false"
+              shadow="type: pcfsoft"
+              style={{ width: '100%', height: '100%' }}
+            >
+              <a-assets>
+                {imgURL && !isHdrOrExrFile && <img id="panorama" src={imgURL} crossOrigin="anonymous" />}
+              </a-assets>
+
+              {imgURL && <a-entity ref={panoramaEntityRef} position={`0 ${panoramaVerticalOffset} 0`} />}
+              <a-camera wasd-controls-enabled="true" far={Math.max(50, Math.ceil(panoramaRadius * 1.05 + 10))}></a-camera>
+            </a-scene>
           </div>
-        )}
-        <a-scene
-          ref={sceneRef}
-          embedded
-          vr-mode-ui="enabled: false"
-          shadow="type: pcfsoft"
-          style={{ width: '100%', height: '100%' }}
-        >
-          <a-assets>
-            {imgURL && !isHdrOrExrFile && <img id="panorama" src={imgURL} crossOrigin="anonymous" />}
-          </a-assets>
+        </CardContent>
+      </Card>
 
-          {imgURL && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} />}
-          <a-camera wasd-controls-enabled="true" far={Math.max(50, Math.ceil(domeRadius * 1.05 + 10))}></a-camera>
-        </a-scene>
-      </div>
+      <Card className="xl:sticky xl:top-4 xl:self-start">
+        <CardHeader className="pb-3">
+          <CardTitle>Ajustes 360</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 xl:max-h-[78vh] xl:overflow-y-auto xl:pr-1">
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={resetGrading}>
+              Resetar ajustes
+            </Button>
+            <Button type="button" size="sm" onClick={handleSave} disabled={saveLoading || !onSave}>
+              {saveLoading ? "A guardar..." : "Guardar"}
+            </Button>
+          </div>
+          {saveMessage && <p className="text-xs text-emerald-700">{saveMessage}</p>}
+          {saveError && <p className="text-xs text-red-700">{saveError}</p>}
 
-      <div style={{ marginLeft: "20px" }}>
-        <h3>Dome 360</h3>
-        <div>
-          <label>Raio: {Math.round(domeRadius)}</label>
-          <input
-            type="range"
-            min={300}
-            max={1400}
-            step={10}
-            value={domeRadius}
-            onChange={e => setDomeRadius(parseFloat(e.target.value))}
-          />
-        </div>
-        <div>
-          <label>Posição vertical: {Math.round(domeVerticalOffset)}</label>
-          <input
-            type="range"
-            min={-2000}
-            max={2000}
-            step={1}
-            value={domeVerticalOffset}
-            onChange={e => setDomeVerticalOffset(parseFloat(e.target.value))}
-          />
-        </div>
-        <div>
-          <label>Início Vertical (theta-start): {Math.round(domeThetaStartDeg)}°</label>
-          <input
-            type="range"
-            min={0}
-            max={150}
-            step={1}
-            value={domeThetaStartDeg}
-            onChange={e => {
-              const nextStart = parseInt(e.target.value, 10);
-              if (!Number.isFinite(nextStart)) return;
-              setDomeThetaStartDeg(nextStart);
-              setDomeThetaLengthDeg(prev => Math.min(prev, 180 - nextStart));
-            }}
-          />
-        </div>
-        <div>
-          <label>Abertura Vertical (theta-length): {Math.round(domeThetaLengthDeg)}°</label>
-          <input
-            type="range"
-            min={20}
-            max={180 - domeThetaStartDeg}
-            step={1}
-            value={domeThetaLengthDeg}
-            onChange={e => {
-              const nextLength = parseInt(e.target.value, 10);
-              if (!Number.isFinite(nextLength)) return;
-              setDomeThetaLengthDeg(nextLength);
-            }}
-          />
-        </div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Panorama</h3>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Raio: {Math.round(panoramaRadius)}</label>
+              <input
+                className="w-full"
+                type="range"
+                min={300}
+                max={1400}
+                step={10}
+                value={panoramaRadius}
+                onChange={e => setPanoramaRadius(parseFloat(e.target.value))}
+              />
+            </div>
 
-        <h3>VFX / Color Grading</h3>
-        <div>
-          <label>Brilho</label>
-          <input type="range" min={0.1} max={2} step={0.01} value={brightness} onChange={e => setBrightness(parseFloat(e.target.value))} />
-        </div>
-        <div>
-          <label>Contraste</label>
-          <input type="range" min={0.1} max={2} step={0.01} value={contrast} onChange={e => setContrast(parseFloat(e.target.value))} />
-        </div>
-        <div>
-          <label>Saturação</label>
-          <input type="range" min={0} max={3} step={0.01} value={saturation} onChange={e => setSaturation(parseFloat(e.target.value))} />
-        </div>
-        <div>
-          <label>Matiz</label>
-          <input type="range" min={-180} max={180} step={1} value={hue} onChange={e => setHue(parseInt(e.target.value))} />
-        </div>
-      </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Posicao vertical: {Math.round(panoramaVerticalOffset)}</label>
+              <input
+                className="w-full"
+                type="range"
+                min={-2000}
+                max={2000}
+                step={1}
+                value={panoramaVerticalOffset}
+                onChange={e => setPanoramaVerticalOffset(parseFloat(e.target.value))}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">VFX / Color Grading</h3>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Brilho: {brightness.toFixed(2)}</label>
+              <input className="w-full" type="range" min={0.1} max={2} step={0.01} value={brightness} onChange={e => setBrightness(parseFloat(e.target.value))} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Contraste: {contrast.toFixed(2)}</label>
+              <input className="w-full" type="range" min={0.1} max={2} step={0.01} value={contrast} onChange={e => setContrast(parseFloat(e.target.value))} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Saturacao: {saturation.toFixed(2)}</label>
+              <input className="w-full" type="range" min={0} max={3} step={0.01} value={saturation} onChange={e => setSaturation(parseFloat(e.target.value))} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Matiz: {Math.round(hue)} deg</label>
+              <input className="w-full" type="range" min={-180} max={180} step={1} value={hue} onChange={e => setHue(parseInt(e.target.value))} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

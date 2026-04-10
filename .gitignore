@@ -41,3 +41,10 @@ build/
 
 # Debug
 debug/
+
+backend/uploads/pontos/*
+!backend/uploads/pontos/.gitkeep
+backend/uploads/modelos3d/*
+!backend/uploads/modelos3d/.gitkeep
+backend/uploads/media/*
+!backend/uploads/media/.gitkeep
