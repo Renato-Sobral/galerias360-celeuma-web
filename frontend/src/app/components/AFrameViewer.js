@@ -28,6 +28,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const NAV_BACK_VALUE = "nav:back";
   const HOTSPOT_META_PREFIX = "hsmeta:";
   const IMAGE4P_PREFIX = "img4p:";
+  const INSPECT3D_PREFIX = "insp3d:";
   const HOTSPOT_SCALE_MIN = 0.2;
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
   const DEFAULT_DOME_LIGHT_ROTATION_DEG = 0;
@@ -35,6 +36,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const DEFAULT_DOME_LIGHT_WORLD_OPACITY = 0;
   const DEFAULT_DOME_LIGHT_BLUR = 0.5;
   const DEFAULT_DOME_ROTATION_Y = -130;
+  const DEFAULT_DOME_ROTATION_X = 0;
+  const DEFAULT_DOME_ROTATION_Z = 0;
+  const DEFAULT_DOME_MIRROR_X = false;
+  const DEFAULT_DOME_MIRROR_Y = false;
   const DEFAULT_DOME_LIGHT_COLOR = "#ffffff";
   const DEFAULT_DOME_LIGHT_DISTANCE = 2200;
   const DEFAULT_DOME_SHADOW_BIAS = -0.00015;
@@ -207,6 +212,40 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     }
   };
 
+  const encodeInspect3dValue = (payload) => {
+    const safePayload = {
+      src: String(payload?.src || ""),
+      rotationSpeed: Number.isFinite(Number(payload?.rotationSpeed)) ? Number(payload.rotationSpeed) : 1,
+      axis: ["x", "y", "z"].includes(payload?.axis) ? payload.axis : "y",
+      buttons: Array.isArray(payload?.buttons) ? payload.buttons : [],
+    };
+
+    try {
+      return `${INSPECT3D_PREFIX}${btoa(unescape(encodeURIComponent(JSON.stringify(safePayload))))}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const decodeInspect3dValue = (rawValue) => {
+    const value = String(rawValue || "");
+    if (!value.startsWith(INSPECT3D_PREFIX)) return null;
+
+    try {
+      const encoded = value.slice(INSPECT3D_PREFIX.length);
+      const json = decodeURIComponent(escape(atob(encoded)));
+      const parsed = JSON.parse(json);
+      return {
+        src: String(parsed?.src || ""),
+        rotationSpeed: Number.isFinite(Number(parsed?.rotationSpeed)) ? Number(parsed.rotationSpeed) : 1,
+        axis: ["x", "y", "z"].includes(parsed?.axis) ? parsed.axis : "y",
+        buttons: Array.isArray(parsed?.buttons) ? parsed.buttons : [],
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const decodeNavigationContent = (tipo, conteudo) => {
     if (tipo !== "link") return { mode: null, pointId: "", filePath: "" };
 
@@ -258,6 +297,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [selectedHotspot, setSelectedHotspot] = useState(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [domeDialogOpen, setDomeDialogOpen] = useState(false);
+  const [showAlignmentGuides, setShowAlignmentGuides] = useState(true);
+  const [alignmentGuidesOpacity, setAlignmentGuidesOpacity] = useState(0.65);
   const [editTipo, setEditTipo] = useState("");
   const [editConteudo, setEditConteudo] = useState("");
   const [editX, setEditX] = useState(0);
@@ -268,7 +309,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editPitch, setEditPitch] = useState(0);
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [domeVerticalOffset, setDomeVerticalOffset] = useState(0);
+  const [domeRotationX, setDomeRotationX] = useState(DEFAULT_DOME_ROTATION_X);
   const [domeRotationY, setDomeRotationY] = useState(DEFAULT_DOME_ROTATION_Y);
+  const [domeRotationZ, setDomeRotationZ] = useState(DEFAULT_DOME_ROTATION_Z);
+  const [domeMirrorX, setDomeMirrorX] = useState(DEFAULT_DOME_MIRROR_X);
+  const [domeMirrorY, setDomeMirrorY] = useState(DEFAULT_DOME_MIRROR_Y);
   const [domeLightRotationDeg, setDomeLightRotationDeg] = useState(DEFAULT_DOME_LIGHT_ROTATION_DEG);
   const [domeLightStrength, setDomeLightStrength] = useState(DEFAULT_DOME_LIGHT_STRENGTH);
   const [domeLightWorldOpacity, setDomeLightWorldOpacity] = useState(DEFAULT_DOME_LIGHT_WORLD_OPACITY);
@@ -297,6 +342,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editImage4pRotateDeg, setEditImage4pRotateDeg] = useState(0);
   const [editImage4pFlipX, setEditImage4pFlipX] = useState(false);
   const [editImage4pFlipY, setEditImage4pFlipY] = useState(false);
+  const [inspectModeHotspotId, setInspectModeHotspotId] = useState(null);
+  const [editInspect3dSrc, setEditInspect3dSrc] = useState(null);
+  const [editInspect3dRotationSpeed, setEditInspect3dRotationSpeed] = useState(1);
+  const [editInspect3dAxis, setEditInspect3dAxis] = useState("y");
+  const [editInspect3dButtons, setEditInspect3dButtons] = useState([]);
   const [isCapturingImage4pPoints, setIsCapturingImage4pPoints] = useState(false);
   const [isPickingGroundPosition, setIsPickingGroundPosition] = useState(false);
   const [pontosDestino, setPontosDestino] = useState([]);
@@ -399,6 +449,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     { label: "Imagem", value: "imagem" },
     { label: "Imagem (4 pontos)", value: "imagem4p" },
     { label: "Modelo 3D", value: "modelo3d" },
+    { label: "Modelo 3D (Inspect)", value: "modelo3d_inspect" },
     { label: "Áudio", value: "audio" },
     { label: "Áudio Espacial", value: "audioespacial" },
     { label: "Vídeo", value: "video" },
@@ -439,10 +490,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       ? baseVerticalOffset
       : 0;
 
+    const baseRotationX = Number(settings?.rotationX);
     const baseRotationY = Number(settings?.rotationY);
+    const baseRotationZ = Number(settings?.rotationZ);
+    const rotationX = Number.isFinite(baseRotationX)
+      ? clamp(baseRotationX, -360, 360)
+      : DEFAULT_DOME_ROTATION_X;
     const rotationY = Number.isFinite(baseRotationY)
       ? clamp(baseRotationY, -360, 360)
       : DEFAULT_DOME_ROTATION_Y;
+    const rotationZ = Number.isFinite(baseRotationZ)
+      ? clamp(baseRotationZ, -360, 360)
+      : DEFAULT_DOME_ROTATION_Z;
+    const mirrorX = typeof settings?.mirrorX === "boolean"
+      ? settings.mirrorX
+      : DEFAULT_DOME_MIRROR_X;
+    const mirrorY = typeof settings?.mirrorY === "boolean"
+      ? settings.mirrorY
+      : DEFAULT_DOME_MIRROR_Y;
 
     const baseLightRotationDeg = Number(settings?.lightRotationDeg);
     const baseLightStrength = Number(settings?.lightStrength);
@@ -481,7 +546,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return {
       radius,
       verticalOffset,
+      rotationX,
       rotationY,
+      rotationZ,
+      mirrorX,
+      mirrorY,
       lightRotationDeg,
       lightStrength,
       lightWorldOpacity,
@@ -497,7 +566,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const normalized = normalizeDomeSettings({
       radius: domeRadius,
       verticalOffset: domeVerticalOffset,
+      rotationX: domeRotationX,
       rotationY: domeRotationY,
+      rotationZ: domeRotationZ,
+      mirrorX: domeMirrorX,
+      mirrorY: domeMirrorY,
       lightRotationDeg: domeLightRotationDeg,
       lightStrength: domeLightStrength,
       lightWorldOpacity: domeLightWorldOpacity,
@@ -510,7 +583,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     });
     setDomeRadius(normalized.radius);
     setDomeVerticalOffset(normalized.verticalOffset);
+    setDomeRotationX(normalized.rotationX);
     setDomeRotationY(normalized.rotationY);
+    setDomeRotationZ(normalized.rotationZ);
+    setDomeMirrorX(normalized.mirrorX);
+    setDomeMirrorY(normalized.mirrorY);
     setDomeLightRotationDeg(normalized.lightRotationDeg);
     setDomeLightStrength(normalized.lightStrength);
     setDomeLightWorldOpacity(normalized.lightWorldOpacity);
@@ -531,7 +608,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const normalized = normalizeDomeSettings(saved);
     setDomeRadius(normalized.radius);
     setDomeVerticalOffset(normalized.verticalOffset);
+    setDomeRotationX(normalized.rotationX);
     setDomeRotationY(normalized.rotationY);
+    setDomeRotationZ(normalized.rotationZ);
+    setDomeMirrorX(normalized.mirrorX);
+    setDomeMirrorY(normalized.mirrorY);
     setDomeLightRotationDeg(normalized.lightRotationDeg);
     setDomeLightStrength(normalized.lightStrength);
     setDomeLightWorldOpacity(normalized.lightWorldOpacity);
@@ -774,6 +855,125 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const AFRAME = window.AFRAME;
     const THREE = window.THREE;
     if (!AFRAME || !THREE) return;
+
+    if (!AFRAME.components["inspect-3d"]) {
+      AFRAME.registerComponent("inspect-3d", {
+        schema: {
+          axis: { type: "string", default: "y" },
+          speed: { type: "number", default: 1 },
+          isInspecting: { type: "boolean", default: false }
+        },
+        init() {
+          this.baseRotation = new THREE.Euler().copy(this.el.object3D.rotation);
+          this.basePosition = new THREE.Vector3().copy(this.el.object3D.position);
+          this.baseScale = new THREE.Vector3().copy(this.el.object3D.scale);
+
+          this.dragRotation = new THREE.Euler(0, 0, 0);
+          this.isDragging = false;
+          this.previousMousePosition = { x: 0, y: 0 };
+
+          this.idleRotationOffset = 0;
+
+          this.onMouseDown = (e) => {
+            if (!this.data.isInspecting) return;
+            this.isDragging = true;
+            this.previousMousePosition.x = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+            this.previousMousePosition.y = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+          };
+          this.onMouseUp = () => { this.isDragging = false; };
+          this.onMouseMove = (e) => {
+            if (!this.isDragging || !this.data.isInspecting) return;
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+
+            const deltaX = clientX - this.previousMousePosition.x;
+            const deltaY = clientY - this.previousMousePosition.y;
+
+            this.previousMousePosition = { x: clientX, y: clientY };
+
+            this.dragRotation.y += deltaX * 0.01;
+            this.dragRotation.x += deltaY * 0.01;
+          };
+
+          this.onMouseDownBound = this.onMouseDown.bind(this);
+          this.onMouseUpBound = this.onMouseUp.bind(this);
+          this.onMouseMoveBound = this.onMouseMove.bind(this);
+
+          window.addEventListener("mousedown", this.onMouseDownBound);
+          window.addEventListener("mouseup", this.onMouseUpBound);
+          window.addEventListener("mousemove", this.onMouseMoveBound);
+          window.addEventListener("touchstart", this.onMouseDownBound, { passive: true });
+          window.addEventListener("touchend", this.onMouseUpBound);
+          window.addEventListener("touchmove", this.onMouseMoveBound, { passive: true });
+        },
+        update(oldData) {
+          if (this.data.isInspecting !== oldData.isInspecting) {
+            const sceneEl = this.el.sceneEl;
+            if (!sceneEl || !sceneEl.camera) return;
+            const cameraEl = sceneEl.camera.el;
+
+            if (this.data.isInspecting) {
+              if (cameraEl.components["look-controls"]) {
+                cameraEl.setAttribute("look-controls", "enabled", false);
+              }
+              const cameraWorldPos = new THREE.Vector3();
+              const cameraWorldDir = new THREE.Vector3();
+              sceneEl.camera.getWorldPosition(cameraWorldPos);
+              sceneEl.camera.getWorldDirection(cameraWorldDir);
+
+              this.targetPosition = new THREE.Vector3().copy(cameraWorldPos).add(cameraWorldDir.multiplyScalar(2));
+              this.dragRotation.set(0, 0, 0);
+            } else {
+              if (cameraEl.components["look-controls"]) {
+                cameraEl.setAttribute("look-controls", "enabled", true);
+              }
+              this.targetPosition = new THREE.Vector3().copy(this.basePosition);
+              this.idleRotationOffset = 0;
+            }
+          }
+        },
+        tick(time, timeDelta) {
+          if (!this.targetPosition) this.targetPosition = new THREE.Vector3().copy(this.basePosition);
+
+          if (this.data.isInspecting) {
+            this.el.object3D.position.lerp(this.targetPosition, 0.05);
+
+            // Smooth rotation targeting based on drag
+            const targetEuler = new THREE.Euler(
+              this.baseRotation.x + this.dragRotation.x,
+              this.baseRotation.y + this.dragRotation.y,
+              this.baseRotation.z + this.dragRotation.z
+            );
+
+            this.el.object3D.rotation.x += (targetEuler.x - this.el.object3D.rotation.x) * 0.1;
+            this.el.object3D.rotation.y += (targetEuler.y - this.el.object3D.rotation.y) * 0.1;
+            this.el.object3D.rotation.z += (targetEuler.z - this.el.object3D.rotation.z) * 0.1;
+
+          } else {
+            this.el.object3D.position.lerp(this.basePosition, 0.05);
+            const rSpeed = this.data.speed * (timeDelta / 1000) || 0;
+            this.idleRotationOffset += rSpeed;
+
+            const targetEuler = new THREE.Euler().copy(this.baseRotation);
+            if (this.data.axis === 'x') targetEuler.x += this.idleRotationOffset;
+            else if (this.data.axis === 'z') targetEuler.z += this.idleRotationOffset;
+            else targetEuler.y += this.idleRotationOffset;
+
+            this.el.object3D.rotation.x += (targetEuler.x - this.el.object3D.rotation.x) * 0.1;
+            this.el.object3D.rotation.y += (targetEuler.y - this.el.object3D.rotation.y) * 0.1;
+            this.el.object3D.rotation.z += (targetEuler.z - this.el.object3D.rotation.z) * 0.1;
+          }
+        },
+        remove() {
+          window.removeEventListener("mousedown", this.onMouseDownBound);
+          window.removeEventListener("mouseup", this.onMouseUpBound);
+          window.removeEventListener("mousemove", this.onMouseMoveBound);
+          window.removeEventListener("touchstart", this.onMouseDownBound);
+          window.removeEventListener("touchend", this.onMouseUpBound);
+          window.removeEventListener("touchmove", this.onMouseMoveBound);
+        }
+      });
+    }
 
     if (!AFRAME.components["face-camera"]) {
       AFRAME.registerComponent("face-camera", {
@@ -1380,7 +1580,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           renderer.shadowMap.type = window.THREE?.VSMShadowMap ?? window.THREE?.PCFSoftShadowMap ?? renderer.shadowMap.type;
           renderer.shadowMap.needsUpdate = true;
           renderer.outputColorSpace = window.THREE?.SRGBColorSpace ?? renderer.outputColorSpace;
-          renderer.toneMapping = window.THREE?.ACESFilmicToneMapping ?? renderer.toneMapping;
+          // ACES is great for HDR/EXR, but it can darken regular JPG/MP4 panoramas.
+          renderer.toneMapping = isHdrOrExrEnvironment
+            ? (window.THREE?.ACESFilmicToneMapping ?? renderer.toneMapping)
+            : (window.THREE?.NoToneMapping ?? renderer.toneMapping);
           renderer.toneMappingExposure = 1.0;
           renderer.setClearColor?.(0x000000, 1);
         }
@@ -1424,7 +1627,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       sceneEl.removeEventListener("renderstart", apply);
       sceneEl.removeEventListener("loaded", apply);
     };
-  }, [domeShadowBias]);
+  }, [domeShadowBias, isHdrOrExrEnvironment]);
 
   useEffect(() => {
     const ambientLight = ambientLightRef.current?.getObject3D?.("light");
@@ -1521,10 +1724,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       kind: panoramaKind,
       src: panoramaSrc,
       radius: domeRadius,
+      rotationX: domeRotationX,
       rotationY: domeRotationY,
+      rotationZ: domeRotationZ,
+      mirrorX: domeMirrorX,
+      mirrorY: domeMirrorY,
       opacity: 1,
     });
-  }, [domeComponentReady, domeRadius, domeRotationY, panoramaKind, panoramaSrc]);
+  }, [domeComponentReady, domeMirrorX, domeMirrorY, domeRadius, domeRotationX, domeRotationY, domeRotationZ, panoramaKind, panoramaSrc]);
 
   useEffect(() => {
     const el = document.querySelector('a-text');
@@ -1610,6 +1817,34 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     ),
 
     modelo3d: (conteudo, hotspot) => renderModelo3dHotspot(conteudo, hotspot),
+
+    modelo3d_inspect: (conteudo, hotspot) => {
+      const payload = decodeInspect3dValue(conteudo);
+      if (!payload) return null;
+      const currentFloorY = floorY;
+      const { isGround } = getModelHotspotPlacement(hotspot, currentFloorY);
+      const isInspecting = inspectModeHotspotId === hotspot.id;
+
+      const groundingAttributes = isGround
+        ? { "ground-model-on-floor": "contactShadow: 0" }
+        : {
+          "center-model-pivot": "",
+          "ground-model-on-dome": `centerY: ${currentFloorY}; inset: 1.6; contactShadow: ${DEFAULT_MODEL_CONTACT_SHADOW_OPACITY}`,
+        };
+
+      return (
+        <a-entity
+          gltf-model={payload.src}
+          position={defaultModelTransformProps.position}
+          rotation={defaultModelTransformProps.rotation}
+          scale={defaultModelTransformProps.scale}
+          shadow="cast: true; receive: true"
+          inspect-3d={`axis: ${payload.axis}; speed: ${payload.rotationSpeed}; isInspecting: ${isInspecting}`}
+          class="clickable"
+          {...groundingAttributes}
+        />
+      );
+    },
 
     audio: (conteudo) => (
       <a-entity>
@@ -1728,7 +1963,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             rot_yaw: decodedContent.rotYaw || 0,
             rot_pitch: decodedContent.rotPitch || 0,
             placement: String(decodedContent.placement || ""),
-            tipo: isNavigation ? "navegacao" : (h.tipo || ""),
+            tipo: isNavigation ? "navegacao" : (h.tipo === "modelo3d" && decodedContent.value.startsWith(INSPECT3D_PREFIX) ? "modelo3d_inspect" : (h.tipo || "")),
             conteudo: isNavigation ? "" : decodedContent.value,
             view_path: decodedContent.view,
             navigation_mode: navigation.mode,
@@ -1839,6 +2074,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       const id = Number(e.currentTarget.dataset.id);
       const hotspot = hotspots.find((h) => h.id === id);
       if (hotspot) {
+        if (hotspot.tipo === "modelo3d_inspect" && !editDialogOpen) {
+          setInspectModeHotspotId((prev) => prev === hotspot.id ? null : hotspot.id);
+          return;
+        }
+
         if (enableContextMenu) {
           setSelectedHotspot(hotspot);
           clickEventRef.current = e;
@@ -2227,6 +2467,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditImage4pRotateDeg(0);
         setEditImage4pFlipX(false);
         setEditImage4pFlipY(false);
+        setEditInspect3dSrc(null);
+        setEditInspect3dRotationSpeed(1);
+        setEditInspect3dAxis("y");
+        setEditInspect3dButtons([]);
         setIsCapturingImage4pPoints(false);
         setEditDialogOpen(true);
       }
@@ -2405,6 +2649,43 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     }
 
+    if (editTipo === "modelo3d_inspect") {
+      let finalModelSrc = editInspect3dSrc;
+      if (editModelSelection) {
+        const resolvedModel = await resolveMediaSelection(editModelSelection, "modelos3d");
+        const resolvedModelUrl = resolvedModel?.url || resolveUploadsUrl(resolvedModel?.path || "");
+
+        if (!resolvedModelUrl) {
+          Swal.fire({
+            title: "Modelo inválido",
+            text: "Não foi possível resolver o ficheiro 3D selecionado.",
+            icon: "warning",
+            confirmButtonColor: "#171717",
+          });
+          return;
+        }
+
+        finalModelSrc = resolvedModelUrl;
+      }
+
+      if (!String(finalModelSrc || "").trim()) {
+        Swal.fire({
+          title: "Modelo em falta",
+          text: "Seleciona ou faz upload de um ficheiro GLB/GLTF para o hotspot de inspeção 3D.",
+          icon: "warning",
+          confirmButtonColor: "#171717",
+        });
+        return;
+      }
+
+      finalConteudoRaw = encodeInspect3dValue({
+        src: finalModelSrc,
+        rotationSpeed: editInspect3dRotationSpeed,
+        axis: editInspect3dAxis,
+        buttons: editInspect3dButtons
+      });
+    }
+
     if (editTipo === "imagem") {
       if (editImageSelection) {
         const resolvedImage = await resolveMediaSelection(editImageSelection, "media");
@@ -2482,7 +2763,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tipo: finalTipo,
+          tipo: finalTipo === "modelo3d_inspect" ? "modelo3d" : finalTipo,
           conteudo: finalConteudo,
           x: finalX,
           y: finalY,
@@ -2593,6 +2874,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         <video style={{ display: "none" }} id="environment" ref={handleVideoRef} preload="auto" crossOrigin="anonymous" autoPlay loop muted playsInline>
           <source src={parsedEnvironment.url} type={parsedEnvironment.mime} />
         </video>
+      )}
+
+      {domeDialogOpen && showAlignmentGuides && (
+        <a-entity position={`0 ${domeVerticalOffset} 0`}>
+          <a-sphere
+            radius={domeRadius * 0.98}
+            segments-width="36"
+            segments-height="18"
+            material={`shader: flat; wireframe: true; color: rgba(255, 255, 255, ${alignmentGuidesOpacity * 0.4}); transparent: true; side: back`}
+          ></a-sphere>
+          
+          {/* Equator (Horizonline) */}
+          <a-entity
+            geometry={`primitive: ring; radiusInner: ${domeRadius * 0.975}; radiusOuter: ${domeRadius * 0.98}; segmentsTheta: 64`}
+            rotation="-90 0 0"
+            material={`shader: flat; color: rgba(255, 80, 80, ${alignmentGuidesOpacity}); transparent: true; side: double`}
+          ></a-entity>
+        </a-entity>
       )}
 
       {panoramaSrc && panoramaKind && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} shadow="cast: false; receive: true" />}
@@ -2962,7 +3261,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   setEditModelSelection(
                     selectedHotspot.tipo === "modelo3d" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
                       ? createLibrarySelection(relativePathFromUploadsUrl(selectedHotspot.conteudo || ""))
-                      : null
+                      : selectedHotspot.tipo === "modelo3d_inspect" && relativePathFromUploadsUrl(decodeInspect3dValue(selectedHotspot.conteudo || "")?.src || "")
+                        ? createLibrarySelection(relativePathFromUploadsUrl(decodeInspect3dValue(selectedHotspot.conteudo || "")?.src || ""))
+                        : null
                   );
                   setEditImageSelection(
                     selectedHotspot.tipo === "imagem" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
@@ -2984,6 +3285,29 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     const rel = relativePathFromUploadsUrl(src);
                     setEditImage4pSelection(rel ? createLibrarySelection(rel) : null);
                     setIsCapturingImage4pPoints(false);
+                    setEditInspect3dSrc(null);
+                    setEditInspect3dRotationSpeed(1);
+                    setEditInspect3dAxis("y");
+                    setEditInspect3dButtons([]);
+                  } else if (selectedHotspot.tipo === "modelo3d_inspect") {
+                    const payload = decodeInspect3dValue(selectedHotspot.conteudo || "");
+                    const src = payload?.src || "";
+                    setEditInspect3dSrc(src);
+                    setEditInspect3dRotationSpeed(Number.isFinite(Number(payload?.rotationSpeed)) ? Number(payload.rotationSpeed) : 1);
+                    setEditInspect3dAxis(["x", "y", "z"].includes(payload?.axis) ? payload.axis : "y");
+                    setEditInspect3dButtons(Array.isArray(payload?.buttons) ? payload.buttons : []);
+                    const rel = relativePathFromUploadsUrl(src);
+                    setEditModelSelection(rel ? createLibrarySelection(rel) : null);
+                    setEditImage4pSelection(null);
+                    setEditImage4pPreviewUrl("");
+                    setEditImage4pPoints([]);
+                    setEditImage4pOpacity(1);
+                    setEditImage4pBrightness(1);
+                    setEditImage4pInset(0.6);
+                    setEditImage4pRotateDeg(0);
+                    setEditImage4pFlipX(false);
+                    setEditImage4pFlipY(false);
+                    setIsCapturingImage4pPoints(false);
                   } else {
                     setEditImage4pSelection(null);
                     setEditImage4pPreviewUrl("");
@@ -2995,6 +3319,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setEditImage4pFlipX(false);
                     setEditImage4pFlipY(false);
                     setIsCapturingImage4pPoints(false);
+                    setEditInspect3dSrc(null);
+                    setEditInspect3dRotationSpeed(1);
+                    setEditInspect3dAxis("y");
+                    setEditInspect3dButtons([]);
                   }
                   setPositionAndAnglesFromXYZ(selectedHotspot.x, selectedHotspot.y, selectedHotspot.z);
                   setEditPontoDestino(selectedHotspot.id_ponto_destino || "");
@@ -3040,6 +3368,38 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             </div>
           </>
         )}
+
+        {inspectModeHotspotId && (() => {
+          const hot = hotspots.find(h => h.id === inspectModeHotspotId);
+          if (!hot) return null;
+          const payload = decodeInspect3dValue(hot.conteudo);
+          if (!payload) return null;
+
+          return (
+            <div className="absolute inset-0 pointer-events-none flex flex-col justify-end items-center pb-12 z-50">
+              <button
+                type="button"
+                className="absolute top-4 right-4 pointer-events-auto bg-black/50 hover:bg-black/70 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl font-bold backdrop-blur-sm"
+                onClick={() => setInspectModeHotspotId(null)}
+              >
+                ✕
+              </button>
+              <div className="flex gap-4 pointer-events-auto overflow-x-auto max-w-full px-4 py-2 drop-shadow-md">
+                {payload.buttons?.map((btn, i) => (
+                  <a
+                    key={i}
+                    href={btn.url || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-white hover:bg-gray-100 text-black px-6 py-3 rounded-full font-medium whitespace-nowrap shadow-lg transition-transform hover:scale-105"
+                  >
+                    {btn.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
       <CustomDialog
         open={domeDialogOpen}
@@ -3055,6 +3415,116 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       >
         <div className="flex flex-col gap-2 mt-2">
           <label className="text-sm font-medium">Vista: {currentViewPath || "vista inicial"}</label>
+
+          <div className="mt-2 rounded border border-black/10 p-2">
+            <div className="text-xs font-semibold text-black/70 mb-2">Guias de Alinhamento</div>
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showAlignmentGuides}
+                onChange={(e) => setShowAlignmentGuides(Boolean(e.target.checked))}
+              />
+              Mostrar linhas-guia no ecrã
+            </label>
+
+            <label className="text-sm font-medium mt-2 block">
+              Opacidade das guias: {alignmentGuidesOpacity.toFixed(2)}
+            </label>
+            <input
+              className="w-full accent-black"
+              type="range"
+              min="0.2"
+              max="1"
+              step="0.01"
+              value={alignmentGuidesOpacity}
+              onChange={(e) => {
+                const nextOpacity = parseFloat(e.target.value);
+                if (!Number.isFinite(nextOpacity)) return;
+                setAlignmentGuidesOpacity(Math.max(0.2, Math.min(1, nextOpacity)));
+              }}
+            />
+          </div>
+
+          <div className="mt-2 rounded border border-black/10 p-2">
+            <div className="text-xs font-semibold text-black/70 mb-2">Alinhamento do Panorama</div>
+
+            <label className="text-sm font-medium">Alinhamento (Roll): {Math.round(domeRotationZ)}°</label>
+            <input
+              className="w-full accent-black"
+              type="range"
+              min="-360"
+              max="360"
+              step="1"
+              value={domeRotationZ}
+              onChange={(e) => {
+                const nextRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRotation)) return;
+                persistDomeSettingsForView({ rotationZ: nextRotation });
+              }}
+            />
+            <input
+              className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+              type="number"
+              step="1"
+              min="-360"
+              max="360"
+              value={domeRotationZ}
+              onChange={(e) => {
+                const nextRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRotation)) return;
+                persistDomeSettingsForView({ rotationZ: nextRotation });
+              }}
+            />
+
+            <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw): {Math.round(domeRotationY)}°</label>
+            <input
+              className="w-full accent-black"
+              type="range"
+              min="-360"
+              max="360"
+              step="1"
+              value={domeRotationY}
+              onChange={(e) => {
+                const nextRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRotation)) return;
+                persistDomeSettingsForView({ rotationY: nextRotation });
+              }}
+            />
+
+            <label className="text-sm font-medium">Rotacao Vertical (Pitch): {Math.round(domeRotationX)}°</label>
+            <input
+              className="w-full accent-black"
+              type="range"
+              min="-180"
+              max="180"
+              step="1"
+              value={domeRotationX}
+              onChange={(e) => {
+                const nextRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRotation)) return;
+                persistDomeSettingsForView({ rotationX: nextRotation });
+              }}
+            />
+
+            <div className="mt-2 grid grid-cols-1 gap-2">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={domeMirrorX}
+                  onChange={(e) => persistDomeSettingsForView({ mirrorX: Boolean(e.target.checked) })}
+                />
+                Espelhar horizontalmente
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={domeMirrorY}
+                  onChange={(e) => persistDomeSettingsForView({ mirrorY: Boolean(e.target.checked) })}
+                />
+                Espelhar verticalmente
+              </label>
+            </div>
+          </div>
 
           <div className="mt-2 border-t border-black/10 pt-2" />
           <div className="grid grid-cols-2 gap-2">
@@ -3087,8 +3557,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               if (!Number.isFinite(nextRotation)) return;
               persistDomeSettingsForView({
                 radius: domeRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
+                rotationY: domeRotationY,
                 verticalOffset: domeVerticalOffset,
                 lightRotationDeg: nextRotation,
                 lightStrength: domeLightStrength,
@@ -3111,8 +3580,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               if (!Number.isFinite(nextStrength)) return;
               persistDomeSettingsForView({
                 radius: domeRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
+                rotationY: domeRotationY,
                 verticalOffset: domeVerticalOffset,
                 lightRotationDeg: domeLightRotationDeg,
                 lightStrength: nextStrength,
@@ -3185,8 +3653,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               if (!Number.isFinite(nextWorldOpacity)) return;
               persistDomeSettingsForView({
                 radius: domeRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
+                rotationY: domeRotationY,
                 verticalOffset: domeVerticalOffset,
                 lightRotationDeg: domeLightRotationDeg,
                 lightStrength: domeLightStrength,
@@ -3221,8 +3688,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               if (!Number.isFinite(nextBlur)) return;
               persistDomeSettingsForView({
                 radius: domeRadius,
-                thetaStartDeg: domeThetaStartDeg,
-                thetaLengthDeg: domeThetaLengthDeg,
+                rotationY: domeRotationY,
                 verticalOffset: domeVerticalOffset,
                 lightRotationDeg: domeLightRotationDeg,
                 lightStrength: domeLightStrength,
@@ -3344,6 +3810,97 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 destinationPath="modelos3d"
                 helperText="Escolhe ou envia um ficheiro GLB/GLTF no File Manager para importar no A-Frame."
               />
+            ) : editTipo === "modelo3d_inspect" ? (
+              <div className="flex flex-col gap-2">
+                <MediaSourceField
+                  label="Modelo 3D Inspeção (GLB/GLTF)"
+                  accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
+                  selection={editModelSelection}
+                  onChange={(selection) => {
+                    setEditModelSelection(selection);
+                    if (!selection) {
+                      setEditInspect3dSrc(null);
+                      return;
+                    }
+
+                    if (selection.source === "library") {
+                      setEditInspect3dSrc(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                      return;
+                    }
+
+                    setEditInspect3dSrc(selection.file?.name || "");
+                  }}
+                  destinationPath="modelos3d"
+                  helperText="Selecione o modelo para rotação e inspeção."
+                />
+
+                <label className="text-sm font-medium mt-1">Eixo de Rotação:</label>
+                <select
+                  value={editInspect3dAxis}
+                  onChange={(e) => setEditInspect3dAxis(e.target.value)}
+                  className="border rounded px-2 py-1 text-sm dark:bg-black"
+                >
+                  <option value="x">X</option>
+                  <option value="y">Y</option>
+                  <option value="z">Z</option>
+                </select>
+
+                <label className="text-sm font-medium mt-1">Velocidade de Rotação:</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editInspect3dRotationSpeed}
+                  onChange={(e) => setEditInspect3dRotationSpeed(parseFloat(e.target.value))}
+                  className="border rounded px-2 py-1 text-sm dark:bg-black"
+                />
+
+                <label className="text-sm font-medium mt-1">Botões de Ação:</label>
+                <div className="border border-black/10 rounded p-2 flex flex-col gap-2 max-h-40 overflow-y-auto">
+                  {editInspect3dButtons.map((btn, index) => (
+                    <div key={index} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="Label do botão"
+                        value={btn.label}
+                        onChange={(e) => {
+                          const newBtns = [...editInspect3dButtons];
+                          newBtns[index].label = e.target.value;
+                          setEditInspect3dButtons(newBtns);
+                        }}
+                        className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
+                      />
+                      <input
+                        type="text"
+                        placeholder="URL (https://...)"
+                        value={btn.url}
+                        onChange={(e) => {
+                          const newBtns = [...editInspect3dButtons];
+                          newBtns[index].url = e.target.value;
+                          setEditInspect3dButtons(newBtns);
+                        }}
+                        className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newBtns = editInspect3dButtons.filter((_, i) => i !== index);
+                          setEditInspect3dButtons(newBtns);
+                        }}
+                        className="text-red-500 hover:text-red-700 font-bold px-2"
+                      >
+                        X
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setEditInspect3dButtons([...editInspect3dButtons, { label: "", url: "" }])}
+                    className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white self-start"
+                  >
+                    + Adicionar botão
+                  </button>
+                </div>
+              </div>
             ) : editTipo === "imagem4p" ? (
               <div className="flex flex-col gap-2">
                 <MediaSourceField
