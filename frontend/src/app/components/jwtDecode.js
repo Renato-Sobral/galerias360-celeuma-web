@@ -16,6 +16,21 @@ export const getUserRoleFromToken = () => {
   }
 };
 
+export const getUserRoleIdFromToken = () => {
+  const token = getToken();
+
+  if (!token) return null;
+
+  try {
+    const decoded = jwtDecode(token);
+    const roleId = Number(decoded.id_role);
+    return Number.isInteger(roleId) ? roleId : null;
+  } catch (error) {
+    console.error('Erro ao decodificar o token:', error);
+    return null;
+  }
+};
+
 export const getUserIdFromToken = () => {
   const token = getToken();
   if (token) {

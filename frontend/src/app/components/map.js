@@ -950,6 +950,9 @@ function FormLateral({ isOpen, onClose, coordinates, categorias = [], existingPo
         try {
             const response = await fetch(url, {
                 method: existingPonto ? "PATCH" : "POST",
+                headers: {
+                    Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
+                },
                 body: formData,
             });
 

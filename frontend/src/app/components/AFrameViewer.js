@@ -9,13 +9,27 @@ import DropdownSingle from "./select";
 import MediaSourceField from "./MediaSourceField";
 import Swal from "sweetalert2";
 import { createLibrarySelection, resolveMediaSelection, resolveUploadsUrl, relativePathFromUploadsUrl } from "../lib/media-library";
-import { ensurePanoramaDomeComponent } from "../lib/aframe-panorama-dome";
+import { getUserRoleFromToken, getUserRoleIdFromToken } from "./jwtDecode";
 
 const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigateOnHotspot = false }) => {
   const API_BASE =
     (typeof process.env.NEXT_PUBLIC_API_URL === "string" && process.env.NEXT_PUBLIC_API_URL.trim())
       ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
       : "";
+
+  const userRole = useMemo(() => getUserRoleFromToken(), []);
+  const userRoleId = useMemo(() => Number(getUserRoleIdFromToken()), []);
+
+  const canManageHotspots = useMemo(() => {
+    if (Number.isInteger(userRoleId)) {
+      return userRoleId !== 2;
+    }
+
+    if (!userRole) return false;
+    return userRole !== "User";
+  }, [userRole, userRoleId]);
+
+  const showEditContextMenu = enableContextMenu && canManageHotspots;
 
   const buildApiUrl = (path) => {
     if (!API_BASE) return path;
@@ -31,25 +45,23 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const INSPECT3D_PREFIX = "insp3d:";
   const HOTSPOT_SCALE_MIN = 0.2;
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
-  const DEFAULT_DOME_LIGHT_ROTATION_DEG = 0;
-  const DEFAULT_DOME_LIGHT_STRENGTH = 1;
-  const DEFAULT_DOME_LIGHT_WORLD_OPACITY = 0;
-  const DEFAULT_DOME_LIGHT_BLUR = 0.5;
   const DEFAULT_DOME_ROTATION_Y = -130;
   const DEFAULT_DOME_ROTATION_X = 0;
   const DEFAULT_DOME_ROTATION_Z = 0;
   const DEFAULT_DOME_MIRROR_X = false;
   const DEFAULT_DOME_MIRROR_Y = false;
-  const DEFAULT_DOME_LIGHT_COLOR = "#ffffff";
-  const DEFAULT_DOME_LIGHT_DISTANCE = 2200;
-  const DEFAULT_DOME_SHADOW_BIAS = -0.00015;
-  const DEFAULT_SHADOW_RECEIVER_Y_OFFSET = 0;
+  const DEFAULT_AMBIENT_LIGHT_INTENSITY = 0;
+  const DEFAULT_POINT_LIGHT_INTENSITY = 1;
+  const DEFAULT_POINT_LIGHT_COLOR = "#ffffff";
+  const DEFAULT_POINT_LIGHT_DISTANCE = 2200;
+  const DEFAULT_POINT_LIGHT_SHADOW_BIAS = -0.00015;
   const DEFAULT_MODEL_CONTACT_SHADOW_OPACITY = 0.34;
   const MODEL_CONTACT_SHADOW_MIN_RADIUS = 0.3;
   const MODEL_CONTACT_SHADOW_GROUND_SCALE = 1.25;
   const MODEL_CONTACT_SHADOW_DOME_SCALE = 1.2;
   const DOME_LIGHT_RADIUS = 45;
   const DOME_LIGHT_HEIGHT = 35;
+  const DEFAULT_POINT_LIGHT_POSITION = `0 ${DOME_LIGHT_HEIGHT.toFixed(2)} ${DOME_LIGHT_RADIUS.toFixed(2)}`;
 
   const toFiniteNumber = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -173,6 +185,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotateDeg: Number.isFinite(Number(payload?.rotateDeg)) ? Number(payload.rotateDeg) : 0,
       flipX: Boolean(payload?.flipX),
       flipY: Boolean(payload?.flipY),
+      depthMode: payload?.depthMode === "occlusion-mask" ? "occlusion-mask" : "none",
+      occlusionMaskPoints: Array.isArray(payload?.occlusionMaskPoints) ? payload.occlusionMaskPoints : [],
+      occlusionMaskInset: Number.isFinite(Number(payload?.occlusionMaskInset)) ? Number(payload.occlusionMaskInset) : 0,
     };
 
     try {
@@ -206,6 +221,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         rotateDeg: Number.isFinite(Number(parsed?.rotateDeg)) ? Number(parsed.rotateDeg) : 0,
         flipX: Boolean(parsed?.flipX),
         flipY: Boolean(parsed?.flipY),
+        depthMode: parsed?.depthMode === "occlusion-mask" ? "occlusion-mask" : "none",
+        occlusionMaskPoints: (Array.isArray(parsed?.occlusionMaskPoints) ? parsed.occlusionMaskPoints : [])
+          .map((p) => ({
+            x: Number(p?.x),
+            y: Number(p?.y),
+            z: Number(p?.z),
+          }))
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)),
+        occlusionMaskInset: Number.isFinite(Number(parsed?.occlusionMaskInset)) ? Number(parsed.occlusionMaskInset) : 0,
       };
     } catch {
       return null;
@@ -282,11 +306,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const sceneRef = useRef(null);
-  const domeEntityRef = useRef(null);
+  const panoramaNodeRef = useRef(null);
   const groundPlaneRef = useRef(null);
   const ambientLightRef = useRef(null);
   const pointLightRef = useRef(null);
-  const [domeComponentReady, setDomeComponentReady] = useState(false);
   const [hotspots, setHotspots] = useState([]);
   const clickEventRef = useRef(null);
   const image4pMagnifierCanvasRef = useRef(null);
@@ -314,16 +337,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [domeRotationZ, setDomeRotationZ] = useState(DEFAULT_DOME_ROTATION_Z);
   const [domeMirrorX, setDomeMirrorX] = useState(DEFAULT_DOME_MIRROR_X);
   const [domeMirrorY, setDomeMirrorY] = useState(DEFAULT_DOME_MIRROR_Y);
-  const [domeLightRotationDeg, setDomeLightRotationDeg] = useState(DEFAULT_DOME_LIGHT_ROTATION_DEG);
-  const [domeLightStrength, setDomeLightStrength] = useState(DEFAULT_DOME_LIGHT_STRENGTH);
-  const [domeLightWorldOpacity, setDomeLightWorldOpacity] = useState(DEFAULT_DOME_LIGHT_WORLD_OPACITY);
-  const [domeLightBlur, setDomeLightBlur] = useState(DEFAULT_DOME_LIGHT_BLUR);
-  const [domeLightColor, setDomeLightColor] = useState(DEFAULT_DOME_LIGHT_COLOR);
-  const [domeLightDistance, setDomeLightDistance] = useState(DEFAULT_DOME_LIGHT_DISTANCE);
-  const [domeShadowBias, setDomeShadowBias] = useState(DEFAULT_DOME_SHADOW_BIAS);
-  const [shadowReceiverEnabled, setShadowReceiverEnabled] = useState(false);
-  const [shadowReceiverOpacity, setShadowReceiverOpacity] = useState(0.35);
-  const [shadowReceiverYOffset, setShadowReceiverYOffset] = useState(DEFAULT_SHADOW_RECEIVER_Y_OFFSET);
+  const [cameraAlignmentBase, setCameraAlignmentBase] = useState({ pitch: 0, yaw: 0 });
   const [editRadius, setEditRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [editScale, setEditScale] = useState(1);
   const [editPlacement, setEditPlacement] = useState("");
@@ -342,12 +356,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editImage4pRotateDeg, setEditImage4pRotateDeg] = useState(0);
   const [editImage4pFlipX, setEditImage4pFlipX] = useState(false);
   const [editImage4pFlipY, setEditImage4pFlipY] = useState(false);
+  const [editImage4pDepthMode, setEditImage4pDepthMode] = useState("none");
+  const [editImage4pOcclusionMaskPoints, setEditImage4pOcclusionMaskPoints] = useState([]);
+  const [editImage4pOcclusionMaskInset, setEditImage4pOcclusionMaskInset] = useState(0);
   const [inspectModeHotspotId, setInspectModeHotspotId] = useState(null);
   const [editInspect3dSrc, setEditInspect3dSrc] = useState(null);
   const [editInspect3dRotationSpeed, setEditInspect3dRotationSpeed] = useState(1);
   const [editInspect3dAxis, setEditInspect3dAxis] = useState("y");
   const [editInspect3dButtons, setEditInspect3dButtons] = useState([]);
   const [isCapturingImage4pPoints, setIsCapturingImage4pPoints] = useState(false);
+  const [isCapturingImage4pMaskPoints, setIsCapturingImage4pMaskPoints] = useState(false);
   const [isPickingGroundPosition, setIsPickingGroundPosition] = useState(false);
   const [pontosDestino, setPontosDestino] = useState([]);
   const [activePontoId, setActivePontoId] = useState(() => String(pontoId || ""));
@@ -466,17 +484,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const positionSliderMax = domeRadius;
   const DOME_VERTICAL_OFFSET_MIN = -2000;
   const DOME_VERTICAL_OFFSET_MAX = 2000;
-  const floorY = (Number(domeVerticalOffset) || 0) + (Number(shadowReceiverYOffset) || 0);
-
-  const lightRotationRad = useMemo(
-    () => (Number(domeLightRotationDeg) * Math.PI) / 180,
-    [domeLightRotationDeg]
-  );
-  const pointLightPosition = useMemo(() => {
-    const x = Math.sin(lightRotationRad) * DOME_LIGHT_RADIUS;
-    const z = Math.cos(lightRotationRad) * DOME_LIGHT_RADIUS;
-    return `${x.toFixed(2)} ${DOME_LIGHT_HEIGHT.toFixed(2)} ${z.toFixed(2)}`;
-  }, [lightRotationRad]);
+  const floorY = Number(domeVerticalOffset) || 0;
 
   const normalizeDomeSettings = (settings) => {
     const baseRadius = Number(settings?.radius);
@@ -509,40 +517,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       ? settings.mirrorY
       : DEFAULT_DOME_MIRROR_Y;
 
-    const baseLightRotationDeg = Number(settings?.lightRotationDeg);
-    const baseLightStrength = Number(settings?.lightStrength);
-    const baseLightWorldOpacity = Number(settings?.lightWorldOpacity);
-    const baseLightBlur = Number(settings?.lightBlur);
-    const baseLightDistance = Number(settings?.lightDistance);
-    const baseShadowBias = Number(settings?.shadowBias);
-    const baseShadowReceiverYOffset = Number(settings?.shadowReceiverYOffset);
-    const rawLightColor = String(settings?.lightColor || "").trim();
-
-    const lightRotationDeg = Number.isFinite(baseLightRotationDeg)
-      ? ((baseLightRotationDeg % 360) + 360) % 360
-      : DEFAULT_DOME_LIGHT_ROTATION_DEG;
-    const lightStrength = Number.isFinite(baseLightStrength)
-      ? Math.max(0, baseLightStrength)
-      : DEFAULT_DOME_LIGHT_STRENGTH;
-    const lightWorldOpacity = Number.isFinite(baseLightWorldOpacity)
-      ? Math.max(0, baseLightWorldOpacity)
-      : DEFAULT_DOME_LIGHT_WORLD_OPACITY;
-    const lightBlur = Number.isFinite(baseLightBlur)
-      ? Math.max(0, baseLightBlur)
-      : DEFAULT_DOME_LIGHT_BLUR;
-    const lightDistance = Number.isFinite(baseLightDistance)
-      ? Math.max(1, baseLightDistance)
-      : DEFAULT_DOME_LIGHT_DISTANCE;
-    const shadowBias = Number.isFinite(baseShadowBias)
-      ? clamp(baseShadowBias, -0.01, 0.01)
-      : DEFAULT_DOME_SHADOW_BIAS;
-    const shadowReceiverYOffset = Number.isFinite(baseShadowReceiverYOffset)
-      ? clamp(baseShadowReceiverYOffset, -2000, 2000)
-      : DEFAULT_SHADOW_RECEIVER_Y_OFFSET;
-    const lightColor = /^#[0-9a-fA-F]{6}$/.test(rawLightColor)
-      ? rawLightColor
-      : DEFAULT_DOME_LIGHT_COLOR;
-
     return {
       radius,
       verticalOffset,
@@ -551,14 +525,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotationZ,
       mirrorX,
       mirrorY,
-      lightRotationDeg,
-      lightStrength,
-      lightWorldOpacity,
-      lightBlur,
-      lightColor,
-      lightDistance,
-      shadowBias,
-      shadowReceiverYOffset,
     };
   };
 
@@ -571,14 +537,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotationZ: domeRotationZ,
       mirrorX: domeMirrorX,
       mirrorY: domeMirrorY,
-      lightRotationDeg: domeLightRotationDeg,
-      lightStrength: domeLightStrength,
-      lightWorldOpacity: domeLightWorldOpacity,
-      lightBlur: domeLightBlur,
-      lightColor: domeLightColor,
-      lightDistance: domeLightDistance,
-      shadowBias: domeShadowBias,
-      shadowReceiverYOffset,
       ...(nextSettings || {}),
     });
     setDomeRadius(normalized.radius);
@@ -588,14 +546,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setDomeRotationZ(normalized.rotationZ);
     setDomeMirrorX(normalized.mirrorX);
     setDomeMirrorY(normalized.mirrorY);
-    setDomeLightRotationDeg(normalized.lightRotationDeg);
-    setDomeLightStrength(normalized.lightStrength);
-    setDomeLightWorldOpacity(normalized.lightWorldOpacity);
-    setDomeLightBlur(normalized.lightBlur);
-    setDomeLightColor(normalized.lightColor);
-    setDomeLightDistance(normalized.lightDistance);
-    setDomeShadowBias(normalized.shadowBias);
-    setShadowReceiverYOffset(normalized.shadowReceiverYOffset);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
     setDomeSettingsByView((prev) => ({
       ...prev,
@@ -613,14 +563,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setDomeRotationZ(normalized.rotationZ);
     setDomeMirrorX(normalized.mirrorX);
     setDomeMirrorY(normalized.mirrorY);
-    setDomeLightRotationDeg(normalized.lightRotationDeg);
-    setDomeLightStrength(normalized.lightStrength);
-    setDomeLightWorldOpacity(normalized.lightWorldOpacity);
-    setDomeLightBlur(normalized.lightBlur);
-    setDomeLightColor(normalized.lightColor);
-    setDomeLightDistance(normalized.lightDistance);
-    setDomeShadowBias(normalized.shadowBias);
-    setShadowReceiverYOffset(normalized.shadowReceiverYOffset);
     setEditRadius((prev) => clamp(prev, 10, normalized.radius));
   }, [currentDomeViewKey, domeSettingsByView]);
 
@@ -671,30 +613,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setEditZ(nextZ);
   };
 
-  const applyDomeLightingPreset = (preset) => {
-    if (preset === "interior") {
-      setShadowReceiverEnabled(false);
-      persistDomeSettingsForView({
-        lightStrength: 1.9,
-        lightWorldOpacity: 0.1,
-        lightBlur: 0.72,
-        lightDistance: 1500,
-        shadowBias: -0.0002,
-      });
-      return;
-    }
-
-    // Exterior: stronger light and enable a large ground shadow receiver plane.
-    setShadowReceiverEnabled(true);
-    setShadowReceiverOpacity(0.35);
-    persistDomeSettingsForView({
-      lightStrength: 2.45,
-      lightWorldOpacity: 0.24,
-      lightBlur: 0.48,
-      lightDistance: 2500,
-      shadowBias: -0.00012,
-    });
+  const normalizeSigned180Deg = (angleDeg) => {
+    let angle = Number(angleDeg) || 0;
+    while (angle > 180) angle -= 360;
+    while (angle < -180) angle += 360;
+    return angle;
   };
+
+
 
   useEffect(() => {
     setEditRadius((prev) => clamp(prev, 10, domeRadius));
@@ -703,8 +629,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   useEffect(() => {
     if (editTipo !== "imagem4p" || !editDialogOpen) {
       setIsCapturingImage4pPoints(false);
+      setIsCapturingImage4pMaskPoints(false);
     }
   }, [editDialogOpen, editTipo]);
+
+
 
   useEffect(() => {
     if (!editDialogOpen || !editStickToGround) {
@@ -737,6 +666,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotateDeg: editImage4pRotateDeg,
       flipX: editImage4pFlipX,
       flipY: editImage4pFlipY,
+      depthMode: editImage4pDepthMode,
+      occlusionMaskPoints: editImage4pOcclusionMaskPoints,
+      occlusionMaskInset: editImage4pOcclusionMaskInset,
     });
 
     setEditConteudo(encoded);
@@ -751,6 +683,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editImage4pRotateDeg,
     editImage4pFlipX,
     editImage4pFlipY,
+    editImage4pDepthMode,
+    editImage4pOcclusionMaskPoints,
+    editImage4pOcclusionMaskInset,
   ]);
 
   const previewHotspots = useMemo(() => {
@@ -843,6 +778,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             rotateDeg: payload.rotateDeg,
             flipX: payload.flipX,
             flipY: payload.flipY,
+            depthMode: payload.depthMode,
+            occlusionMaskPoints: payload.occlusionMaskPoints,
+            occlusionMaskInset: payload.occlusionMaskInset,
           }
           : null;
       })
@@ -1166,32 +1104,47 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           rotateDeg: { type: "number", default: 0 },
           flipX: { type: "boolean", default: false },
           flipY: { type: "boolean", default: false },
+          depthMode: { type: "string", default: "none" },
+          occlusionMaskPoints: { type: "string", default: "" },
+          occlusionMaskInset: { type: "number", default: 0 },
           doubleSided: { type: "boolean", default: true },
         },
         init() {
           this._mesh = null;
+          this._occlusionMaskMesh = null;
+          this._group = null;
           this._geometry = null;
+          this._occlusionMaskGeometry = null;
           this._material = null;
+          this._occlusionMaskMaterial = null;
           this._texture = null;
           this._textureLoader = new THREE.TextureLoader();
           this._textureLoader.crossOrigin = "anonymous";
         },
         remove() {
-          if (this._mesh) {
+          if (this._group || this._mesh) {
             this.el.removeObject3D("mesh");
           }
           this._geometry?.dispose?.();
+          this._occlusionMaskGeometry?.dispose?.();
           this._material?.dispose?.();
+          this._occlusionMaskMaterial?.dispose?.();
           this._texture?.dispose?.();
+          this._group = null;
           this._mesh = null;
+          this._occlusionMaskMesh = null;
           this._geometry = null;
+          this._occlusionMaskGeometry = null;
           this._material = null;
+          this._occlusionMaskMaterial = null;
           this._texture = null;
         },
         update(oldData) {
           const src = String(this.data.src || "").trim();
           const encodedPoints = String(this.data.points || "");
+          const encodedMaskPoints = String(this.data.occlusionMaskPoints || "");
           let points = [];
+          let occlusionMaskPoints = [];
 
           if (encodedPoints) {
             try {
@@ -1211,147 +1164,192 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             }
           }
 
+          if (encodedMaskPoints) {
+            try {
+              const decoded = decodeURIComponent(encodedMaskPoints);
+              const parsed = JSON.parse(decoded);
+              if (Array.isArray(parsed)) {
+                occlusionMaskPoints = parsed
+                  .map((p) => ({
+                    x: Number(p?.x),
+                    y: Number(p?.y),
+                    z: Number(p?.z),
+                  }))
+                  .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+              }
+            } catch {
+              occlusionMaskPoints = [];
+            }
+          }
+
           const opacity = Math.max(0, Math.min(1, Number(this.data.opacity) || 1));
           const brightness = Math.max(0, Math.min(5, Number(this.data.brightness) || 1));
           const inset = Number.isFinite(Number(this.data.inset)) ? Number(this.data.inset) : 0.6;
           const rotateDeg = Number.isFinite(Number(this.data.rotateDeg)) ? Number(this.data.rotateDeg) : 0;
+          const depthMode = this.data.depthMode === "occlusion-mask" ? "occlusion-mask" : "none";
+          const occlusionMaskInset = Number.isFinite(Number(this.data.occlusionMaskInset)) ? Number(this.data.occlusionMaskInset) : 0;
           const flipX = Boolean(this.data.flipX);
           const flipY = Boolean(this.data.flipY);
           const side = this.data.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
 
           if (!src || points.length < 4) {
-            if (this._mesh) {
+            if (this._group || this._mesh) {
               this.el.removeObject3D("mesh");
+              this._group = null;
               this._mesh = null;
+              this._occlusionMaskMesh = null;
             }
             this._geometry?.dispose?.();
+            this._occlusionMaskGeometry?.dispose?.();
             this._material?.dispose?.();
+            this._occlusionMaskMaterial?.dispose?.();
             this._texture?.dispose?.();
             this._geometry = null;
+            this._occlusionMaskGeometry = null;
             this._material = null;
+            this._occlusionMaskMaterial = null;
             this._texture = null;
             return;
           }
 
-          const center = new THREE.Vector3();
-          points.forEach((p) => center.add(new THREE.Vector3(p.x, p.y, p.z)));
-          center.multiplyScalar(1 / points.length);
+          const buildPolygonGeometry = (polygonPoints, polygonInset, includeUv) => {
+            let normalizedPoints = Array.isArray(polygonPoints) ? [...polygonPoints] : [];
+            if (normalizedPoints.length < 3) return null;
 
-          // Determine polygon normal using Newell's method.
-          const normal = new THREE.Vector3(0, 0, 0);
-          for (let i = 0; i < points.length; i += 1) {
-            const current = points[i];
-            const next = points[(i + 1) % points.length];
-            normal.x += (current.y - next.y) * (current.z + next.z);
-            normal.y += (current.z - next.z) * (current.x + next.x);
-            normal.z += (current.x - next.x) * (current.y + next.y);
-          }
-          if (normal.lengthSq() < 1e-8) {
-            // Fallback to first 3 points.
-            const p0 = new THREE.Vector3(points[0].x, points[0].y, points[0].z);
-            const p1 = new THREE.Vector3(points[1].x, points[1].y, points[1].z);
-            const p2 = new THREE.Vector3(points[2].x, points[2].y, points[2].z);
-            normal.copy(new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)));
-          }
-          if (normal.lengthSq() < 1e-8) {
-            return;
-          }
-          normal.normalize();
+            const center = new THREE.Vector3();
+            normalizedPoints.forEach((p) => center.add(new THREE.Vector3(p.x, p.y, p.z)));
+            center.multiplyScalar(1 / normalizedPoints.length);
 
-          // Build a stable tangent basis on the plane.
-          const p0 = new THREE.Vector3(points[0].x, points[0].y, points[0].z);
-          const p1 = new THREE.Vector3(points[1].x, points[1].y, points[1].z);
-          const tangent = new THREE.Vector3().subVectors(p1, p0);
-          tangent.addScaledVector(normal, -tangent.dot(normal));
-          if (tangent.lengthSq() < 1e-8) {
-            tangent.set(1, 0, 0);
+            // Determine polygon normal using Newell's method.
+            const normal = new THREE.Vector3(0, 0, 0);
+            for (let i = 0; i < normalizedPoints.length; i += 1) {
+              const current = normalizedPoints[i];
+              const next = normalizedPoints[(i + 1) % normalizedPoints.length];
+              normal.x += (current.y - next.y) * (current.z + next.z);
+              normal.y += (current.z - next.z) * (current.x + next.x);
+              normal.z += (current.x - next.x) * (current.y + next.y);
+            }
+            if (normal.lengthSq() < 1e-8) {
+              // Fallback to first 3 points.
+              const p0 = new THREE.Vector3(normalizedPoints[0].x, normalizedPoints[0].y, normalizedPoints[0].z);
+              const p1 = new THREE.Vector3(normalizedPoints[1].x, normalizedPoints[1].y, normalizedPoints[1].z);
+              const p2 = new THREE.Vector3(normalizedPoints[2].x, normalizedPoints[2].y, normalizedPoints[2].z);
+              normal.copy(new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)));
+            }
+            if (normal.lengthSq() < 1e-8) {
+              return null;
+            }
+            normal.normalize();
+
+            // Build a stable tangent basis on the plane.
+            const p0 = new THREE.Vector3(normalizedPoints[0].x, normalizedPoints[0].y, normalizedPoints[0].z);
+            const p1 = new THREE.Vector3(normalizedPoints[1].x, normalizedPoints[1].y, normalizedPoints[1].z);
+            const tangent = new THREE.Vector3().subVectors(p1, p0);
             tangent.addScaledVector(normal, -tangent.dot(normal));
-          }
-          tangent.normalize();
-          const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+            if (tangent.lengthSq() < 1e-8) {
+              tangent.set(1, 0, 0);
+              tangent.addScaledVector(normal, -tangent.dot(normal));
+            }
+            tangent.normalize();
+            const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
 
-          const verts2 = points.map((p) => {
-            const v = new THREE.Vector3(p.x, p.y, p.z).sub(center);
-            return new THREE.Vector2(v.dot(tangent), v.dot(bitangent));
-          });
+            const verts2 = normalizedPoints.map((p) => {
+              const v = new THREE.Vector3(p.x, p.y, p.z).sub(center);
+              return new THREE.Vector2(v.dot(tangent), v.dot(bitangent));
+            });
 
-          // Ensure CCW orientation for triangulation.
-          let area = 0;
-          for (let i = 0; i < verts2.length; i += 1) {
-            const a = verts2[i];
-            const b = verts2[(i + 1) % verts2.length];
-            area += (a.x * b.y - b.x * a.y);
-          }
-          if (area < 0) {
-            verts2.reverse();
-            points = [...points].reverse();
-          }
-
-          const triangles = THREE.ShapeUtils.triangulateShape(verts2, []);
-          if (!triangles?.length) return;
-
-          let minX = Infinity;
-          let maxX = -Infinity;
-          let minY = Infinity;
-          let maxY = -Infinity;
-          verts2.forEach((v) => {
-            minX = Math.min(minX, v.x);
-            maxX = Math.max(maxX, v.x);
-            minY = Math.min(minY, v.y);
-            maxY = Math.max(maxY, v.y);
-          });
-          const spanX = Math.max(1e-6, maxX - minX);
-          const spanY = Math.max(1e-6, maxY - minY);
-
-          const positions = new Float32Array(points.length * 3);
-          const uvs = new Float32Array(points.length * 2);
-
-          const angle = (rotateDeg * Math.PI) / 180;
-          const cos = Math.cos(angle);
-          const sin = Math.sin(angle);
-
-          for (let i = 0; i < points.length; i += 1) {
-            const p = points[i];
-            const idx3 = i * 3;
-            const idx2 = i * 2;
-            positions[idx3] = p.x - normal.x * inset;
-            positions[idx3 + 1] = p.y - normal.y * inset;
-            positions[idx3 + 2] = p.z - normal.z * inset;
-
-            let u = (verts2[i].x - minX) / spanX;
-            let v = 1 - (verts2[i].y - minY) / spanY;
-
-            if (flipX) u = 1 - u;
-            if (flipY) v = 1 - v;
-
-            if (Math.abs(rotateDeg) > 1e-6) {
-              const du = u - 0.5;
-              const dv = v - 0.5;
-              u = du * cos - dv * sin + 0.5;
-              v = du * sin + dv * cos + 0.5;
+            // Ensure CCW orientation for triangulation.
+            let area = 0;
+            for (let i = 0; i < verts2.length; i += 1) {
+              const a = verts2[i];
+              const b = verts2[(i + 1) % verts2.length];
+              area += (a.x * b.y - b.x * a.y);
+            }
+            if (area < 0) {
+              verts2.reverse();
+              normalizedPoints = [...normalizedPoints].reverse();
             }
 
-            uvs[idx2] = u;
-            uvs[idx2 + 1] = v;
-          }
+            const triangles = THREE.ShapeUtils.triangulateShape(verts2, []);
+            if (!triangles?.length) return null;
 
-          const indices = new Uint16Array(triangles.length * 3);
-          for (let i = 0; i < triangles.length; i += 1) {
-            const tri = triangles[i];
-            indices[i * 3] = tri[0];
-            indices[i * 3 + 1] = tri[1];
-            indices[i * 3 + 2] = tri[2];
-          }
+            let minX = Infinity;
+            let maxX = -Infinity;
+            let minY = Infinity;
+            let maxY = -Infinity;
+            verts2.forEach((v) => {
+              minX = Math.min(minX, v.x);
+              maxX = Math.max(maxX, v.x);
+              minY = Math.min(minY, v.y);
+              maxY = Math.max(maxY, v.y);
+            });
+            const spanX = Math.max(1e-6, maxX - minX);
+            const spanY = Math.max(1e-6, maxY - minY);
 
-          const buildOrUpdateMesh = (texture) => {
-            this._geometry?.dispose?.();
-            this._material?.dispose?.();
+            const positions = new Float32Array(normalizedPoints.length * 3);
+            const uvs = includeUv ? new Float32Array(normalizedPoints.length * 2) : null;
+
+            const angle = (rotateDeg * Math.PI) / 180;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+
+            for (let i = 0; i < normalizedPoints.length; i += 1) {
+              const p = normalizedPoints[i];
+              const idx3 = i * 3;
+              positions[idx3] = p.x - normal.x * polygonInset;
+              positions[idx3 + 1] = p.y - normal.y * polygonInset;
+              positions[idx3 + 2] = p.z - normal.z * polygonInset;
+
+              if (includeUv && uvs) {
+                const idx2 = i * 2;
+                let u = (verts2[i].x - minX) / spanX;
+                let v = 1 - (verts2[i].y - minY) / spanY;
+
+                if (flipX) u = 1 - u;
+                if (flipY) v = 1 - v;
+
+                if (Math.abs(rotateDeg) > 1e-6) {
+                  const du = u - 0.5;
+                  const dv = v - 0.5;
+                  u = du * cos - dv * sin + 0.5;
+                  v = du * sin + dv * cos + 0.5;
+                }
+
+                uvs[idx2] = u;
+                uvs[idx2 + 1] = v;
+              }
+            }
+
+            const indices = new Uint16Array(triangles.length * 3);
+            for (let i = 0; i < triangles.length; i += 1) {
+              const tri = triangles[i];
+              indices[i * 3] = tri[0];
+              indices[i * 3 + 1] = tri[1];
+              indices[i * 3 + 2] = tri[2];
+            }
 
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+            if (includeUv && uvs) {
+              geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+            }
             geometry.setIndex(new THREE.BufferAttribute(indices, 1));
             geometry.computeVertexNormals();
+            return geometry;
+          };
+
+          const buildOrUpdateMesh = (texture) => {
+            this._geometry?.dispose?.();
+            this._occlusionMaskGeometry?.dispose?.();
+            this._material?.dispose?.();
+            this._occlusionMaskMaterial?.dispose?.();
+
+            if (this._group || this._mesh) {
+              this.el.removeObject3D("mesh");
+            }
+
+            const geometry = buildPolygonGeometry(points, inset, true);
+            if (!geometry) return;
 
             const material = new THREE.MeshBasicMaterial({
               map: texture,
@@ -1369,10 +1367,40 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             mesh.frustumCulled = false;
             mesh.renderOrder = 20;
 
+            const group = new THREE.Group();
+            group.add(mesh);
+
+            let occlusionMaskMesh = null;
+            let occlusionMaskGeometry = null;
+            let occlusionMaskMaterial = null;
+
+            if (depthMode === "occlusion-mask" && occlusionMaskPoints.length >= 3) {
+              occlusionMaskGeometry = buildPolygonGeometry(occlusionMaskPoints, occlusionMaskInset, false);
+              if (occlusionMaskGeometry) {
+                occlusionMaskMaterial = new THREE.MeshBasicMaterial({
+                  color: 0x000000,
+                  side: THREE.DoubleSide,
+                  transparent: true,
+                  opacity: 0,
+                  depthWrite: true,
+                  depthTest: true,
+                  colorWrite: false,
+                });
+                occlusionMaskMesh = new THREE.Mesh(occlusionMaskGeometry, occlusionMaskMaterial);
+                occlusionMaskMesh.frustumCulled = false;
+                occlusionMaskMesh.renderOrder = 19;
+                group.add(occlusionMaskMesh);
+              }
+            }
+
             this._geometry = geometry;
+            this._occlusionMaskGeometry = occlusionMaskGeometry;
             this._material = material;
+            this._occlusionMaskMaterial = occlusionMaskMaterial;
             this._mesh = mesh;
-            this.el.setObject3D("mesh", mesh);
+            this._occlusionMaskMesh = occlusionMaskMesh;
+            this._group = group;
+            this.el.setObject3D("mesh", group);
           };
 
           if (!this._texture || oldData?.src !== src) {
@@ -1552,22 +1580,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   }
 
   useEffect(() => {
-    let mounted = true;
-    ensurePanoramaDomeComponent()
-      .catch(() => {
-        // ignore; errors are surfaced via events when the entity tries to load
-      })
-      .finally(() => {
-        if (!mounted) return;
-        setDomeComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
     const sceneEl = sceneRef.current;
     if (!sceneEl) return;
     let shadowRefreshInterval = null;
@@ -1593,7 +1605,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             obj.castShadow = true;
             if (obj.shadow) {
               obj.shadow.mapSize?.set?.(2048, 2048);
-              obj.shadow.bias = domeShadowBias;
+              obj.shadow.bias = DEFAULT_POINT_LIGHT_SHADOW_BIAS;
             }
           }
           if (obj?.isMesh) {
@@ -1627,62 +1639,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       sceneEl.removeEventListener("renderstart", apply);
       sceneEl.removeEventListener("loaded", apply);
     };
-  }, [domeShadowBias, isHdrOrExrEnvironment]);
-
-  useEffect(() => {
-    const ambientLight = ambientLightRef.current?.getObject3D?.("light");
-    if (ambientLight) {
-      ambientLight.intensity = Math.max(0, domeLightWorldOpacity);
-    }
-
-    const pointLight = pointLightRef.current?.getObject3D?.("light");
-    if (pointLight) {
-      pointLight.intensity = Math.max(0, domeLightStrength);
-      pointLight.distance = domeLightDistance;
-      pointLight.color?.set?.(domeLightColor);
-      pointLight.castShadow = true;
-
-      // Also update A-Frame light component attrs to keep runtime behavior in sync.
-      pointLightRef.current?.setAttribute?.("light", "intensity", Math.max(0, domeLightStrength));
-      pointLightRef.current?.setAttribute?.("light", "distance", domeLightDistance);
-      pointLightRef.current?.setAttribute?.("light", "color", domeLightColor);
-
-      if (pointLight.shadow) {
-        pointLight.shadow.bias = domeShadowBias;
-        pointLight.shadow.mapSize?.set?.(2048, 2048);
-
-        // For PCF/PCFSoft this controls softness; with VSM we also tune blurSamples.
-        pointLight.shadow.radius = Math.max(0, domeLightBlur * 12);
-        if (typeof pointLight.shadow.blurSamples === "number") {
-          pointLight.shadow.blurSamples = Math.max(1, Math.round(4 + domeLightBlur * 20));
-        }
-        pointLight.shadow.needsUpdate = true;
-      }
-    }
-
-    const renderer = sceneRef.current?.renderer;
-    if (renderer?.shadowMap) {
-      renderer.shadowMap.needsUpdate = true;
-    }
-  }, [domeLightBlur, domeLightColor, domeLightDistance, domeLightStrength, domeLightWorldOpacity, domeShadowBias, pointLightPosition]);
-
-  useEffect(() => {
-    const el = domeEntityRef.current;
-    if (!el) return;
-
-    const onError = (evt) => {
-      const message = evt?.detail?.message;
-      setEnvironmentLoadError(message || "Não foi possível carregar o panorama 360.");
-    };
-    const onLoaded = () => setEnvironmentLoadError("");
-
-    el.addEventListener("panorama-dome-error", onError);
-    el.addEventListener("panorama-dome-loaded", onLoaded);
-    return () => {
-      el.removeEventListener("panorama-dome-error", onError);
-      el.removeEventListener("panorama-dome-loaded", onLoaded);
-    };
-  }, [activeEnvironment]);
+  }, [isHdrOrExrEnvironment]);
 
   function parseEnvironment(value) {
     if (!value) return null;
@@ -1701,37 +1658,65 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   /*END Environment file handler*/
 
   const panoramaKind = useMemo(() => {
-    if (isHdrOrExrEnvironment) return "hdr";
     if (parsedEnvironment?.mime?.startsWith("video/")) return "video";
     if (parsedEnvironment?.mime?.startsWith("image/")) return "image";
     return "";
-  }, [isHdrOrExrEnvironment, parsedEnvironment?.mime]);
+  }, [parsedEnvironment?.mime]);
 
   const panoramaSrc = useMemo(() => {
-    if (panoramaKind === "hdr") return parsedEnvironment?.url || "";
     if (panoramaKind === "video") return videoReady ? "#environment" : "";
     if (panoramaKind === "image") return imageSkySrc || "";
     return "";
-  }, [imageSkySrc, panoramaKind, parsedEnvironment?.url, videoReady]);
+  }, [imageSkySrc, panoramaKind, videoReady]);
 
   useEffect(() => {
-    const el = domeEntityRef.current;
-    if (!el) return;
-    if (!panoramaSrc || !panoramaKind) return;
-    if (!domeComponentReady) return;
+    const sceneEl = sceneRef.current;
+    if (!sceneEl?.camera) return;
+    const cameraEl = sceneEl.querySelector("a-camera");
+    const lookControls = cameraEl?.components?.["look-controls"];
+    if (!lookControls?.yawObject || !lookControls?.pitchObject) {
+      setCameraAlignmentBase({ pitch: 0, yaw: 0 });
+      return;
+    }
 
-    el.setAttribute("panorama-dome", {
-      kind: panoramaKind,
-      src: panoramaSrc,
-      radius: domeRadius,
-      rotationX: domeRotationX,
-      rotationY: domeRotationY,
-      rotationZ: domeRotationZ,
-      mirrorX: domeMirrorX,
-      mirrorY: domeMirrorY,
-      opacity: 1,
+    const yawDeg = (lookControls.yawObject.rotation.y * 180) / Math.PI;
+    const pitchDeg = (lookControls.pitchObject.rotation.x * 180) / Math.PI;
+    setCameraAlignmentBase({
+      pitch: Number.isFinite(pitchDeg) ? pitchDeg : 0,
+      yaw: Number.isFinite(yawDeg) ? yawDeg : 0,
     });
-  }, [domeComponentReady, domeMirrorX, domeMirrorY, domeRadius, domeRotationX, domeRotationY, domeRotationZ, panoramaKind, panoramaSrc]);
+  }, [domeDialogOpen]);
+
+  useEffect(() => {
+    if (isHdrOrExrEnvironment) {
+      setEnvironmentLoadError("HDR/EXR não é suportado neste modo. Usa JPG/PNG ou vídeo.");
+      return;
+    }
+    setEnvironmentLoadError("");
+  }, [isHdrOrExrEnvironment]);
+
+  const effectivePanoramaRotation = useMemo(() => {
+    const x = Number(domeRotationX) || 0;
+    const y = Number(domeRotationY) || 0;
+    const z = Number(domeRotationZ) || 0;
+    return `${x} ${y} ${z}`;
+  }, [domeRotationX, domeRotationY, domeRotationZ]);
+
+  const relativeDomeRotationX = useMemo(
+    () => (Number(domeRotationX) || 0) - (Number(cameraAlignmentBase.pitch) || 0),
+    [cameraAlignmentBase.pitch, domeRotationX]
+  );
+
+  const relativeDomeRotationY = useMemo(
+    () => (Number(domeRotationY) || 0) - (Number(cameraAlignmentBase.yaw) || 0),
+    [cameraAlignmentBase.yaw, domeRotationY]
+  );
+
+  const panoramaScale = useMemo(() => {
+    const sx = domeMirrorX ? -1 : 1;
+    const sy = domeMirrorY ? -1 : 1;
+    return `${sx} ${sy} 1`;
+  }, [domeMirrorX, domeMirrorY]);
 
   useEffect(() => {
     const el = document.querySelector('a-text');
@@ -2025,8 +2010,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     if (!scene) return;
 
     const onClickScene = (e) => {
-      if (!enableContextMenu) return;
+      if (!showEditContextMenu) return;
       const btn = e?.detail?.mouseEvent?.button ?? 0;
+
+
 
       if (isPickingGroundPosition && editDialogOpen && editStickToGround && btn === 0) {
         const pointerClientX = Number(e?.clientX ?? e?.detail?.mouseEvent?.clientX);
@@ -2042,7 +2029,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       if (isCapturingImage4pPoints && editDialogOpen && editTipo === "imagem4p" && btn === 0) {
         const pointerClientX = Number(e?.clientX ?? e?.detail?.mouseEvent?.clientX);
         const pointerClientY = Number(e?.clientY ?? e?.detail?.mouseEvent?.clientY);
-        const hit = getIntersectionFromPointer(pointerClientX, pointerClientY);
+        const hit = getIntersectionFromPointer(pointerClientX, pointerClientY, { domeOnly: true });
         if (hit?.point) {
           const nextPoint = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
           setEditImage4pPoints((prev) => {
@@ -2056,6 +2043,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         return;
       }
 
+      if (isCapturingImage4pMaskPoints && editDialogOpen && editTipo === "imagem4p" && btn === 0) {
+        const pointerClientX = Number(e?.clientX ?? e?.detail?.mouseEvent?.clientX);
+        const pointerClientY = Number(e?.clientY ?? e?.detail?.mouseEvent?.clientY);
+        const hit = getIntersectionFromPointer(pointerClientX, pointerClientY, { domeOnly: true });
+        if (hit?.point) {
+          const nextPoint = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+          setEditImage4pOcclusionMaskPoints((prev) => [...(Array.isArray(prev) ? prev : []), nextPoint]);
+        }
+        return;
+      }
+
       const isHotspot = e.target?.classList?.contains("hotspot-interaction");
       if (!isHotspot) {
         setSelectedHotspot(null);
@@ -2063,7 +2061,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     };
 
-    if (enableContextMenu) {
+    if (showEditContextMenu) {
       scene.addEventListener("click", onClickScene);
     }
 
@@ -2079,7 +2077,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           return;
         }
 
-        if (enableContextMenu) {
+        if (showEditContextMenu) {
           setSelectedHotspot(hotspot);
           clickEventRef.current = e;
           console.log("🟥 Clique no HOTSPOT:", hotspot);
@@ -2121,7 +2119,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     });
 
     return () => {
-      if (enableContextMenu) {
+      if (showEditContextMenu) {
         scene.removeEventListener("click", onClickScene);
       }
       clickablePlanes.forEach((el) => {
@@ -2129,7 +2127,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       });
     };
   }, [
-    enableContextMenu,
+    showEditContextMenu,
     hotspots,
     navigateOnHotspot,
     activeEnvironment,
@@ -2139,12 +2137,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editStickToGround,
     isPickingGroundPosition,
     floorY,
+    domeDialogOpen,
     isCapturingImage4pPoints,
+    isCapturingImage4pMaskPoints,
     domeRadius,
     domeVerticalOffset,
   ]);
 
-  const isImage4pCaptureMode = editDialogOpen && editTipo === "imagem4p" && isCapturingImage4pPoints;
+  const isImage4pCaptureMode = editDialogOpen
+    && editTipo === "imagem4p"
+    && (isCapturingImage4pPoints || isCapturingImage4pMaskPoints);
 
   useEffect(() => {
     const sceneEl = sceneRef.current;
@@ -2322,7 +2324,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return null;
   };
 
-  const getIntersectionFromPointer = (pointerClientX, pointerClientY) => {
+  const getIntersectionFromPointer = (pointerClientX, pointerClientY, options = {}) => {
     if (!Number.isFinite(Number(pointerClientX)) || !Number.isFinite(Number(pointerClientY))) return null;
 
     const raycast = getPointerRaycaster(Number(pointerClientX), Number(pointerClientY));
@@ -2334,7 +2336,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const candidates = [];
 
     const groundMesh = groundPlaneRef.current?.getObject3D?.("mesh");
-    if (groundMesh) {
+    if (!options?.domeOnly && groundMesh) {
       const groundHits = raycaster.intersectObject(groundMesh, true);
       const firstGroundHit = groundHits.find((hit) => hit?.point);
       if (firstGroundHit?.point) {
@@ -2353,7 +2355,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     }
 
-    const domeMesh = domeEntityRef.current?.getObject3D?.("mesh");
+    const domeMesh = panoramaNodeRef.current?.getObject3D?.("mesh");
     if (domeMesh) {
       const domeHits = raycaster.intersectObject(domeMesh, true);
       const firstDomeHit = domeHits.find((hit) => hit?.point);
@@ -2467,11 +2469,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditImage4pRotateDeg(0);
         setEditImage4pFlipX(false);
         setEditImage4pFlipY(false);
+        setEditImage4pDepthMode("none");
+        setEditImage4pOcclusionMaskPoints([]);
+        setEditImage4pOcclusionMaskInset(0);
         setEditInspect3dSrc(null);
         setEditInspect3dRotationSpeed(1);
         setEditInspect3dAxis("y");
         setEditInspect3dButtons([]);
         setIsCapturingImage4pPoints(false);
+        setIsCapturingImage4pMaskPoints(false);
         setEditDialogOpen(true);
       }
     } catch (err) {
@@ -2740,6 +2746,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         return;
       }
 
+      if (editImage4pDepthMode === "occlusion-mask" && (!Array.isArray(editImage4pOcclusionMaskPoints) || editImage4pOcclusionMaskPoints.length < 3)) {
+        Swal.fire({
+          title: "Máscara incompleta",
+          text: "Seleciona pelo menos 3 pontos para a máscara de oclusão.",
+          icon: "warning",
+          confirmButtonColor: "#171717",
+        });
+        return;
+      }
+
       finalConteudoRaw = encodeImage4pValue({
         src: finalSrc,
         points: editImage4pPoints,
@@ -2749,6 +2765,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         rotateDeg: editImage4pRotateDeg,
         flipX: editImage4pFlipX,
         flipY: editImage4pFlipY,
+        depthMode: editImage4pDepthMode,
+        occlusionMaskPoints: editImage4pOcclusionMaskPoints,
+        occlusionMaskInset: editImage4pOcclusionMaskInset,
       });
     }
 
@@ -2837,6 +2856,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         position="0 0 0"
         far={Math.max(4000, Math.ceil(domeRadius * 3.5 + 500))}
         look-controls
+        wasd-controls="enabled: false"
         wasd-controls-enabled="false"
         raycaster="objects: .hotspot-interaction"
         cursor="rayOrigin: mouse"
@@ -2852,22 +2872,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         shadow="cast: false; receive: false"
       />
 
-      {shadowReceiverEnabled && (
-        <a-plane
-          position={`0 ${floorY - 0.049} 0`}
-          rotation="-90 0 0"
-          width={Math.max(2400, Math.ceil(domeRadius * 4))}
-          height={Math.max(2400, Math.ceil(domeRadius * 4))}
-          material={`shader: shadow; opacity: ${Math.max(0, Math.min(1, Number(shadowReceiverOpacity) || 0.35))}; transparent: true`}
-          shadow="cast: false; receive: true"
-        />
-      )}
-
-      <a-entity ref={ambientLightRef} light={`type: ambient; color: #ffffff; intensity: ${Math.max(0, domeLightWorldOpacity)}`} />
+      <a-entity ref={ambientLightRef} light={`type: ambient; color: #ffffff; intensity: ${DEFAULT_AMBIENT_LIGHT_INTENSITY}`} />
       <a-entity
         ref={pointLightRef}
-        position={pointLightPosition}
-        light={`type: point; color: ${domeLightColor}; intensity: ${domeLightStrength}; distance: ${domeLightDistance}; decay: 2; castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048; shadowBias: ${domeShadowBias}`}
+        position={DEFAULT_POINT_LIGHT_POSITION}
+        light={`type: point; color: ${DEFAULT_POINT_LIGHT_COLOR}; intensity: ${DEFAULT_POINT_LIGHT_INTENSITY}; distance: ${DEFAULT_POINT_LIGHT_DISTANCE}; decay: 2; castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048; shadowBias: ${DEFAULT_POINT_LIGHT_SHADOW_BIAS}`}
       />
 
       {parsedEnvironment?.mime?.startsWith("video/") && (
@@ -2884,7 +2893,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             segments-height="18"
             material={`shader: flat; wireframe: true; color: rgba(255, 255, 255, ${alignmentGuidesOpacity * 0.4}); transparent: true; side: back`}
           ></a-sphere>
-          
+
           {/* Equator (Horizonline) */}
           <a-entity
             geometry={`primitive: ring; radiusInner: ${domeRadius * 0.975}; radiusOuter: ${domeRadius * 0.98}; segmentsTheta: 64`}
@@ -2894,12 +2903,34 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         </a-entity>
       )}
 
-      {panoramaSrc && panoramaKind && <a-entity ref={domeEntityRef} position={`0 ${domeVerticalOffset} 0`} shadow="cast: false; receive: true" />}
+      {panoramaSrc && panoramaKind === "image" && (
+        <a-sky
+          ref={panoramaNodeRef}
+          src={panoramaSrc}
+          radius={domeRadius}
+          position={`0 ${domeVerticalOffset} 0`}
+          rotation={effectivePanoramaRotation}
+          scale={panoramaScale}
+          shadow="cast: false; receive: true"
+        />
+      )}
+
+      {panoramaSrc && panoramaKind === "video" && (
+        <a-videosphere
+          ref={panoramaNodeRef}
+          src={panoramaSrc}
+          radius={domeRadius}
+          position={`0 ${domeVerticalOffset} 0`}
+          rotation={effectivePanoramaRotation}
+          scale={panoramaScale}
+          shadow="cast: false; receive: true"
+        />
+      )}
 
       {warpOverlays.map((overlay) => (
         <a-entity
           key={`warp-${overlay.id}`}
-          warp-image={`src: ${overlay.src}; points: ${encodeURIComponent(JSON.stringify(overlay.points || []))}; opacity: ${Number.isFinite(Number(overlay.opacity)) ? overlay.opacity : 1}; brightness: ${Number.isFinite(Number(overlay.brightness)) ? overlay.brightness : 1}; inset: ${Number.isFinite(Number(overlay.inset)) ? overlay.inset : 0.6}; rotateDeg: ${Number.isFinite(Number(overlay.rotateDeg)) ? overlay.rotateDeg : 0}; flipX: ${overlay.flipX ? true : false}; flipY: ${overlay.flipY ? true : false}; doubleSided: true`}
+          warp-image={`src: ${overlay.src}; points: ${encodeURIComponent(JSON.stringify(overlay.points || []))}; opacity: ${Number.isFinite(Number(overlay.opacity)) ? overlay.opacity : 1}; brightness: ${Number.isFinite(Number(overlay.brightness)) ? overlay.brightness : 1}; inset: ${Number.isFinite(Number(overlay.inset)) ? overlay.inset : 0.6}; rotateDeg: ${Number.isFinite(Number(overlay.rotateDeg)) ? overlay.rotateDeg : 0}; flipX: ${overlay.flipX ? true : false}; flipY: ${overlay.flipY ? true : false}; depthMode: ${overlay.depthMode === "occlusion-mask" ? "occlusion-mask" : "none"}; occlusionMaskPoints: ${encodeURIComponent(JSON.stringify(overlay.occlusionMaskPoints || []))}; occlusionMaskInset: ${Number.isFinite(Number(overlay.occlusionMaskInset)) ? overlay.occlusionMaskInset : 0}; doubleSided: true`}
         />
       ))}
 
@@ -2913,6 +2944,19 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           shadow="cast: false; receive: false"
         />
       ))}
+
+      {editDialogOpen && editTipo === "imagem4p" && Array.isArray(editImage4pOcclusionMaskPoints) && editImage4pOcclusionMaskPoints.map((p, idx) => (
+        <a-sphere
+          key={`img4p-mask-point-${idx}`}
+          position={`${Number(p.x) || 0} ${Number(p.y) || 0} ${Number(p.z) || 0}`}
+          radius="3.5"
+          color="#22c55e"
+          material="opacity: 0.85; transparent: true"
+          shadow="cast: false; receive: false"
+        />
+      ))}
+
+
 
       {previewHotspots.map((pos) => (
         <a-entity
@@ -3225,7 +3269,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         </div>
       )}
       <div className="h-full w-full relative" style={sceneWarpStyle}>
-        {enableContextMenu ? (
+        {showEditContextMenu ? (
           <ContextMenuWrapper
             onContextMenuCapture={(event) => {
               clickEventRef.current = {
@@ -3237,6 +3281,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             }}
             options={contextMenuOptions}
             onSelect={(value) => {
+              if (!canManageHotspots) return;
+
               if (value === "create") {
                 createHotspot();
               } else if (value === "edit") {
@@ -3281,10 +3327,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setEditImage4pRotateDeg(Number.isFinite(Number(payload?.rotateDeg)) ? Number(payload.rotateDeg) : 0);
                     setEditImage4pFlipX(Boolean(payload?.flipX));
                     setEditImage4pFlipY(Boolean(payload?.flipY));
+                    setEditImage4pDepthMode(payload?.depthMode === "occlusion-mask" ? "occlusion-mask" : "none");
+                    setEditImage4pOcclusionMaskPoints(payload?.occlusionMaskPoints || []);
+                    setEditImage4pOcclusionMaskInset(Number.isFinite(Number(payload?.occlusionMaskInset)) ? Number(payload.occlusionMaskInset) : 0);
                     setEditImage4pPreviewUrl(src);
                     const rel = relativePathFromUploadsUrl(src);
                     setEditImage4pSelection(rel ? createLibrarySelection(rel) : null);
                     setIsCapturingImage4pPoints(false);
+                    setIsCapturingImage4pMaskPoints(false);
                     setEditInspect3dSrc(null);
                     setEditInspect3dRotationSpeed(1);
                     setEditInspect3dAxis("y");
@@ -3307,7 +3357,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setEditImage4pRotateDeg(0);
                     setEditImage4pFlipX(false);
                     setEditImage4pFlipY(false);
+                    setEditImage4pDepthMode("none");
+                    setEditImage4pOcclusionMaskPoints([]);
+                    setEditImage4pOcclusionMaskInset(0);
                     setIsCapturingImage4pPoints(false);
+                    setIsCapturingImage4pMaskPoints(false);
                   } else {
                     setEditImage4pSelection(null);
                     setEditImage4pPreviewUrl("");
@@ -3318,7 +3372,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setEditImage4pRotateDeg(0);
                     setEditImage4pFlipX(false);
                     setEditImage4pFlipY(false);
+                    setEditImage4pDepthMode("none");
+                    setEditImage4pOcclusionMaskPoints([]);
+                    setEditImage4pOcclusionMaskInset(0);
                     setIsCapturingImage4pPoints(false);
+                    setIsCapturingImage4pMaskPoints(false);
                     setEditInspect3dSrc(null);
                     setEditInspect3dRotationSpeed(1);
                     setEditInspect3dAxis("y");
@@ -3447,6 +3505,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
           <div className="mt-2 rounded border border-black/10 p-2">
             <div className="text-xs font-semibold text-black/70 mb-2">Alinhamento do Panorama</div>
+            <div className="text-xs text-black/60 mb-2">
+              O alinhamento é relativo à orientação atual da câmara quando este painel é aberto.
+            </div>
+
+
 
             <label className="text-sm font-medium">Alinhamento (Roll): {Math.round(domeRotationZ)}°</label>
             <input
@@ -3476,33 +3539,37 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               }}
             />
 
-            <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw): {Math.round(domeRotationY)}°</label>
+            <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw relativo): {Math.round(relativeDomeRotationY)}°</label>
             <input
               className="w-full accent-black"
               type="range"
               min="-360"
               max="360"
               step="1"
-              value={domeRotationY}
+              value={relativeDomeRotationY}
               onChange={(e) => {
-                const nextRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRotation)) return;
-                persistDomeSettingsForView({ rotationY: nextRotation });
+                const nextRelativeRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRelativeRotation)) return;
+                persistDomeSettingsForView({
+                  rotationY: nextRelativeRotation + (Number(cameraAlignmentBase.yaw) || 0),
+                });
               }}
             />
 
-            <label className="text-sm font-medium">Rotacao Vertical (Pitch): {Math.round(domeRotationX)}°</label>
+            <label className="text-sm font-medium">Rotacao Vertical (Pitch relativo): {Math.round(relativeDomeRotationX)}°</label>
             <input
               className="w-full accent-black"
               type="range"
               min="-180"
               max="180"
               step="1"
-              value={domeRotationX}
+              value={relativeDomeRotationX}
               onChange={(e) => {
-                const nextRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRotation)) return;
-                persistDomeSettingsForView({ rotationX: nextRotation });
+                const nextRelativeRotation = parseFloat(e.target.value);
+                if (!Number.isFinite(nextRelativeRotation)) return;
+                persistDomeSettingsForView({
+                  rotationX: nextRelativeRotation + (Number(cameraAlignmentBase.pitch) || 0),
+                });
               }}
             />
 
@@ -3525,242 +3592,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
               </label>
             </div>
           </div>
-
-          <div className="mt-2 border-t border-black/10 pt-2" />
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-              onClick={() => applyDomeLightingPreset("interior")}
-            >
-              Preset Interior
-            </button>
-            <button
-              type="button"
-              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-              onClick={() => applyDomeLightingPreset("exterior")}
-            >
-              Preset Exterior
-            </button>
-          </div>
-
-          <label className="text-sm font-medium">Rotacao da luz: {Math.round(domeLightRotationDeg)}°</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="0"
-            max="360"
-            step="1"
-            value={domeLightRotationDeg}
-            onChange={(e) => {
-              const nextRotation = parseFloat(e.target.value);
-              if (!Number.isFinite(nextRotation)) return;
-              persistDomeSettingsForView({
-                radius: domeRadius,
-                rotationY: domeRotationY,
-                verticalOffset: domeVerticalOffset,
-                lightRotationDeg: nextRotation,
-                lightStrength: domeLightStrength,
-                lightWorldOpacity: domeLightWorldOpacity,
-                lightBlur: domeLightBlur,
-              });
-            }}
-          />
-
-          <label className="text-sm font-medium">Strength: {domeLightStrength.toFixed(2)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="0"
-            max={Math.max(8, Math.ceil(domeLightStrength))}
-            step="0.01"
-            value={domeLightStrength}
-            onChange={(e) => {
-              const nextStrength = parseFloat(e.target.value);
-              if (!Number.isFinite(nextStrength)) return;
-              persistDomeSettingsForView({
-                radius: domeRadius,
-                rotationY: domeRotationY,
-                verticalOffset: domeVerticalOffset,
-                lightRotationDeg: domeLightRotationDeg,
-                lightStrength: nextStrength,
-                lightWorldOpacity: domeLightWorldOpacity,
-                lightBlur: domeLightBlur,
-              });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="0.01"
-            min="0"
-            value={domeLightStrength}
-            onChange={(e) => {
-              const nextStrength = parseFloat(e.target.value);
-              if (!Number.isFinite(nextStrength)) return;
-              persistDomeSettingsForView({ lightStrength: nextStrength });
-            }}
-          />
-
-          <label className="text-sm font-medium">Cor da luz</label>
-          <input
-            className="h-9 w-full cursor-pointer rounded border border-black/20 bg-white"
-            type="color"
-            value={domeLightColor}
-            onChange={(e) => {
-              const nextColor = String(e.target.value || "");
-              persistDomeSettingsForView({ lightColor: nextColor });
-            }}
-          />
-
-          <label className="text-sm font-medium">Distancia da luz: {Math.round(domeLightDistance)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="200"
-            max={Math.max(4000, Math.ceil(domeLightDistance))}
-            step="10"
-            value={domeLightDistance}
-            onChange={(e) => {
-              const nextDistance = parseFloat(e.target.value);
-              if (!Number.isFinite(nextDistance)) return;
-              persistDomeSettingsForView({ lightDistance: nextDistance });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="10"
-            min="1"
-            value={domeLightDistance}
-            onChange={(e) => {
-              const nextDistance = parseFloat(e.target.value);
-              if (!Number.isFinite(nextDistance)) return;
-              persistDomeSettingsForView({ lightDistance: nextDistance });
-            }}
-          />
-
-          <label className="text-sm font-medium">World Opacity: {domeLightWorldOpacity.toFixed(2)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="0"
-            max={Math.max(3, Math.ceil(domeLightWorldOpacity))}
-            step="0.01"
-            value={domeLightWorldOpacity}
-            onChange={(e) => {
-              const nextWorldOpacity = parseFloat(e.target.value);
-              if (!Number.isFinite(nextWorldOpacity)) return;
-              persistDomeSettingsForView({
-                radius: domeRadius,
-                rotationY: domeRotationY,
-                verticalOffset: domeVerticalOffset,
-                lightRotationDeg: domeLightRotationDeg,
-                lightStrength: domeLightStrength,
-                lightWorldOpacity: nextWorldOpacity,
-                lightBlur: domeLightBlur,
-              });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="0.01"
-            min="0"
-            value={domeLightWorldOpacity}
-            onChange={(e) => {
-              const nextWorldOpacity = parseFloat(e.target.value);
-              if (!Number.isFinite(nextWorldOpacity)) return;
-              persistDomeSettingsForView({ lightWorldOpacity: nextWorldOpacity });
-            }}
-          />
-
-          <label className="text-sm font-medium">Blur: {domeLightBlur.toFixed(2)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="0"
-            max={Math.max(10, Math.ceil(domeLightBlur))}
-            step="0.01"
-            value={domeLightBlur}
-            onChange={(e) => {
-              const nextBlur = parseFloat(e.target.value);
-              if (!Number.isFinite(nextBlur)) return;
-              persistDomeSettingsForView({
-                radius: domeRadius,
-                rotationY: domeRotationY,
-                verticalOffset: domeVerticalOffset,
-                lightRotationDeg: domeLightRotationDeg,
-                lightStrength: domeLightStrength,
-                lightWorldOpacity: domeLightWorldOpacity,
-                lightBlur: nextBlur,
-              });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="0.01"
-            min="0"
-            value={domeLightBlur}
-            onChange={(e) => {
-              const nextBlur = parseFloat(e.target.value);
-              if (!Number.isFinite(nextBlur)) return;
-              persistDomeSettingsForView({ lightBlur: nextBlur });
-            }}
-          />
-
-          <label className="text-sm font-medium">Shadow Bias: {domeShadowBias.toFixed(5)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min={-Math.max(0.01, Math.abs(domeShadowBias))}
-            max={Math.max(0.01, Math.abs(domeShadowBias))}
-            step="0.00001"
-            value={domeShadowBias}
-            onChange={(e) => {
-              const nextBias = parseFloat(e.target.value);
-              if (!Number.isFinite(nextBias)) return;
-              persistDomeSettingsForView({ shadowBias: nextBias });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="0.00001"
-            value={domeShadowBias}
-            onChange={(e) => {
-              const nextBias = parseFloat(e.target.value);
-              if (!Number.isFinite(nextBias)) return;
-              persistDomeSettingsForView({ shadowBias: nextBias });
-            }}
-          />
-
-          <label className="text-sm font-medium">Shadow Receiver (cima/baixo): {shadowReceiverYOffset.toFixed(1)}</label>
-          <input
-            className="w-full accent-black"
-            type="range"
-            min="-500"
-            max="500"
-            step="0.1"
-            value={shadowReceiverYOffset}
-            onChange={(e) => {
-              const nextOffset = parseFloat(e.target.value);
-              if (!Number.isFinite(nextOffset)) return;
-              persistDomeSettingsForView({ shadowReceiverYOffset: nextOffset });
-            }}
-          />
-          <input
-            className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-            type="number"
-            step="0.1"
-            value={shadowReceiverYOffset}
-            onChange={(e) => {
-              const nextOffset = parseFloat(e.target.value);
-              if (!Number.isFinite(nextOffset)) return;
-              persistDomeSettingsForView({ shadowReceiverYOffset: nextOffset });
-            }}
-          />
         </div>
       </CustomDialog>
       <CustomDialog
@@ -3944,7 +3775,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     <div className="text-sm font-medium">Pontos: {Array.isArray(editImage4pPoints) ? editImage4pPoints.length : 0} (mín. 4)</div>
                     <button
                       type="button"
-                      onClick={() => setIsCapturingImage4pPoints((prev) => !prev)}
+                      onClick={() => {
+                        setIsCapturingImage4pMaskPoints(false);
+                        setIsCapturingImage4pPoints((prev) => !prev);
+                      }}
                       className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
                     >
                       {isCapturingImage4pPoints ? "Parar captura" : "Capturar no 360"}
@@ -3955,6 +3789,78 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       Clica no 360 para adicionar pontos (em ordem à volta do outdoor).
                     </div>
                   )}
+
+                  <div className="mt-3 rounded border border-black/10 p-2">
+                    <label className="text-xs font-medium">Profundidade / Oclusão</label>
+                    <select
+                      value={editImage4pDepthMode}
+                      onChange={(e) => setEditImage4pDepthMode(e.target.value === "occlusion-mask" ? "occlusion-mask" : "none")}
+                      className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-black"
+                    >
+                      <option value="none">Sem oclusão</option>
+                      <option value="occlusion-mask">Máscara de oclusão (objetos à frente)</option>
+                    </select>
+
+                    {editImage4pDepthMode === "occlusion-mask" && (
+                      <>
+                        <div className="mt-2 text-xs text-neutral-600">
+                          Define uma máscara para os objetos em primeiro plano (ex.: poste). A imagem 4 pontos ficará atrás dessa máscara.
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="text-sm font-medium">Máscara: {Array.isArray(editImage4pOcclusionMaskPoints) ? editImage4pOcclusionMaskPoints.length : 0} pontos (mín. 3)</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCapturingImage4pPoints(false);
+                              setIsCapturingImage4pMaskPoints((prev) => !prev);
+                            }}
+                            className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                          >
+                            {isCapturingImage4pMaskPoints ? "Parar máscara" : "Capturar máscara no 360"}
+                          </button>
+                        </div>
+
+                        {isCapturingImage4pMaskPoints && (
+                          <div className="mt-1 text-xs text-neutral-600">
+                            Clica no 360 para desenhar o contorno do objeto que deve ficar à frente.
+                          </div>
+                        )}
+
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditImage4pOcclusionMaskPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
+                            className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                          >
+                            Remover último (máscara)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditImage4pOcclusionMaskPoints([])}
+                            className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                          >
+                            Limpar máscara
+                          </button>
+                        </div>
+
+                        <div className="mt-2 flex flex-col gap-1">
+                          <label className="text-xs font-medium">Inset da máscara (aprox. câmara)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={editImage4pOcclusionMaskInset}
+                            onChange={(e) => {
+                              const next = parseFloat(e.target.value);
+                              if (!Number.isFinite(next)) return;
+                              setEditImage4pOcclusionMaskInset(next);
+                            }}
+                            className="border rounded px-2 py-1 text-sm dark:bg-black"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
 
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button

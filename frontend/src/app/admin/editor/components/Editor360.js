@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import 'aframe';
-import { ensurePanoramaDomeComponent } from "../../../lib/aframe-panorama-dome";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function Editor360({ file, initialSettings, onSave }) {
   const sceneRef = useRef(null);
-  const panoramaEntityRef = useRef(null);
-  const [panoramaComponentReady, setPanoramaComponentReady] = useState(false);
   const DEFAULT_PANORAMA_RADIUS = 700;
   const [imgURL, setImgURL] = useState(null);
   const [loadingImage, setLoadingImage] = useState(false);
@@ -35,55 +32,6 @@ export default function Editor360({ file, initialSettings, onSave }) {
   }, [initialSettings, file]);
 
   useEffect(() => {
-    let mounted = true;
-    ensurePanoramaDomeComponent()
-      .catch(() => {
-        // ignore; errors are surfaced via events when the entity tries to load
-      })
-      .finally(() => {
-        if (!mounted) return;
-        setPanoramaComponentReady(Boolean(window?.AFRAME?.components?.["panorama-dome"]));
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const el = panoramaEntityRef.current;
-    if (!el) return;
-
-    const onError = (evt) => {
-      const message = evt?.detail?.message;
-      setEnvironmentError(message || "Nao foi possivel carregar o panorama no editor.");
-    };
-    const onLoaded = () => setEnvironmentError("");
-
-    el.addEventListener("panorama-dome-error", onError);
-    el.addEventListener("panorama-dome-loaded", onLoaded);
-    return () => {
-      el.removeEventListener("panorama-dome-error", onError);
-      el.removeEventListener("panorama-dome-loaded", onLoaded);
-    };
-  }, [imgURL, isHdrOrExrFile]);
-
-  useEffect(() => {
-    const el = panoramaEntityRef.current;
-    if (!el) return;
-    if (!imgURL) return;
-    if (!panoramaComponentReady) return;
-
-    el.setAttribute("panorama-dome", {
-      kind: isHdrOrExrFile ? "hdr" : "image",
-      src: imgURL,
-      radius: panoramaRadius,
-      rotationY: -90,
-      opacity: 1,
-    });
-  }, [imgURL, isHdrOrExrFile, panoramaComponentReady, panoramaRadius]);
-
-  useEffect(() => {
     if (!file) return;
 
     const url = URL.createObjectURL(file);
@@ -91,7 +39,7 @@ export default function Editor360({ file, initialSettings, onSave }) {
     setLoadingImage(true);
 
     if (isHdrOrExrFile) {
-      setImgURL(url);
+      setEnvironmentError("HDR/EXR nao e suportado neste modo. Usa JPG/PNG ou video.");
       setLoadingImage(false);
       return () => {
         URL.revokeObjectURL(url);
@@ -149,8 +97,6 @@ export default function Editor360({ file, initialSettings, onSave }) {
       setSaveLoading(false);
     }
   };
-
-  // HDR/EXR and images are now handled by the panorama-dome A-Frame component.
 
   // Aplicar filtros via CSS no canvas
   useEffect(() => {
@@ -232,8 +178,15 @@ export default function Editor360({ file, initialSettings, onSave }) {
                 {imgURL && !isHdrOrExrFile && <img id="panorama" src={imgURL} crossOrigin="anonymous" />}
               </a-assets>
 
-              {imgURL && <a-entity ref={panoramaEntityRef} position={`0 ${panoramaVerticalOffset} 0`} />}
-              <a-camera wasd-controls-enabled="true" far={Math.max(50, Math.ceil(panoramaRadius * 1.05 + 10))}></a-camera>
+              {imgURL && !isHdrOrExrFile && (
+                <a-sky
+                  src={imgURL}
+                  radius={panoramaRadius}
+                  rotation="0 -90 0"
+                  position={`0 ${panoramaVerticalOffset} 0`}
+                />
+              )}
+              <a-camera wasd-controls="enabled: false" wasd-controls-enabled="false" far={Math.max(50, Math.ceil(panoramaRadius * 1.05 + 10))}></a-camera>
             </a-scene>
           </div>
         </CardContent>

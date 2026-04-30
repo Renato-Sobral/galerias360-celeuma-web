@@ -19,6 +19,7 @@ const themeRoutes = require('./routes/themeRoutes');
 const categoriaPontoRoutes = require('./routes/categoriaPontoRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const editorStateRoutes = require('./routes/editorStateRoutes');
+const mobileRoutes = require('./routes/mobileRoutes');
 const { PRIMARY_UPLOADS_ROOT, LEGACY_UPLOADS_ROOT } = require('./utils/mediaLibrary');
 const { seedDefaultThemePresets } = require('./services/themePresetDefaults');
 //const estatistica = require('./models/estatistica');
@@ -47,15 +48,23 @@ const devPrivateOriginRegex = /^https?:\/\/(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) {
+    // Permitir requisições sem origem (mobile apps, WebViews, scripts locais)
+    if (!origin || origin === "null" || origin === "undefined") {
       return callback(null, true);
     }
+
+    // Verificar se a origem está na lista permitida
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
+
+    // Em desenvolvimento, permitir localhost e IPs privados
     if (isDev && (devLocalOriginRegex.test(origin) || devPrivateOriginRegex.test(origin))) {
       return callback(null, true);
     }
+
+    // Log para debug
+    console.warn(`CORS: Requisição bloqueada de origem: ${origin}`);
     return callback(new Error(`CORS blocked origin: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -90,6 +99,7 @@ app.use('/theme', themeRoutes);
 app.use('/categoria', categoriaPontoRoutes);
 app.use('/media', mediaRoutes);
 app.use('/editor', editorStateRoutes);
+app.use('/mobile', mobileRoutes);
 
 io.on("connection", (socket) => {
   console.log(`🔗 Cliente conectado: ${socket.id}`);

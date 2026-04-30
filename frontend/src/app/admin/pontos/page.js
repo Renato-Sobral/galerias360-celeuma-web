@@ -52,6 +52,10 @@ function Pontos({ userRole }) {
   const router = useRouter();
 
   const getAuthToken = () => localStorage.getItem("authToken") || "";
+  const getAuthHeaders = () => {
+    const token = getAuthToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -101,10 +105,13 @@ function Pontos({ userRole }) {
       const url = `${process.env.NEXT_PUBLIC_API_URL}/ponto/delete/${id_ponto}`;
       const response = await fetch(url, {
         method: "DELETE",
+        headers: getAuthHeaders(),
       });
 
+      const payload = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        throw new Error("Erro ao apagar o ponto.");
+        throw new Error(payload.error || payload.message || "Erro ao apagar o ponto.");
       }
 
       setPontos((prev) => prev.filter((p) => p.id_ponto !== id_ponto));
@@ -146,10 +153,17 @@ function Pontos({ userRole }) {
       formData.append("imagePath", resolvedImage?.path || "");
 
       const url = `${process.env.NEXT_PUBLIC_API_URL}/ponto/update/${selectedPonto.id_ponto}`;
-      await fetch(url, {
+      const response = await fetch(url, {
         method: "PATCH",
+        headers: getAuthHeaders(),
         body: formData,
       });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Erro ao atualizar ponto.");
+      }
 
       setPontos((prev) =>
         prev.map((p) =>
@@ -175,7 +189,7 @@ function Pontos({ userRole }) {
       console.error("Erro ao atualizar ponto:", error);
       Swal.fire({
         title: "Erro",
-        text: "Erro ao atualizar ponto.",
+        text: error.message || "Erro ao atualizar ponto.",
         icon: "error",
         confirmButtonColor: "#171717",
       });

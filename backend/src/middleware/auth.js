@@ -31,7 +31,26 @@ function requireAdmin(req, res, next) {
     });
 }
 
+function forbidRoleIds(roleIds = [], message = 'Acesso negado') {
+    const normalizedRoleIds = new Set(
+        roleIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id))
+    );
+
+    return (req, res, next) => requireAuth(req, res, () => {
+        const userRoleId = Number(req.auth?.id_role);
+
+        if (Number.isInteger(userRoleId) && normalizedRoleIds.has(userRoleId)) {
+            return res.status(403).json({ message });
+        }
+
+        return next();
+    });
+}
+
 module.exports = {
     requireAuth,
     requireAdmin,
+    forbidRoleIds,
 };
