@@ -380,6 +380,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [domeSettingsLoaded, setDomeSettingsLoaded] = useState(false);
   const navigationTransitionTimerRef = useRef(null);
   const navigationProgressIntervalRef = useRef(null);
+  const domeSettingsSaveTimerRef = useRef(null);
   const NAVIGATION_FADE_MS = 220;
   const NAVIGATION_WARP_OUT_MS = 240;
   const NAVIGATION_WARP_IN_MS = 260;
@@ -441,6 +442,106 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       setDomeSettingsLoaded(true);
     }
   }, [domeSettingsStorageKey]);
+
+  useEffect(() => {
+    if (!domeSettingsLoaded) return;
+    if (!pontoId || !currentViewPath) return;
+
+    if (domeSettingsSaveTimerRef.current) {
+      window.clearTimeout(domeSettingsSaveTimerRef.current);
+    }
+
+    domeSettingsSaveTimerRef.current = window.setTimeout(async () => {
+      try {
+        const viewKey = currentDomeViewKey;
+        const settings = domeSettingsByView[viewKey];
+        if (!settings) return;
+
+        const response = await fetch(
+          `${buildApiUrl(`/ponto/${pontoId}/alinhamento`)}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`
+            },
+            body: JSON.stringify({
+              vista_path: currentViewPath,
+              ...settings
+            })
+          }
+        );
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          console.warn("Falha ao guardar alinhamento do panorama.", payload?.message || response.statusText);
+        }
+      } catch (error) {
+        console.warn("Falha ao guardar alinhamento do panorama.", error);
+      }
+    }, 800);
+
+    return () => {
+      if (domeSettingsSaveTimerRef.current) {
+        window.clearTimeout(domeSettingsSaveTimerRef.current);
+        domeSettingsSaveTimerRef.current = null;
+      }
+    };
+  }, [API_BASE, buildApiUrl, currentDomeViewKey, currentViewPath, domeSettingsLoaded, domeSettingsByView, pontoId]);
+
+  useEffect(() => {
+    if (!domeSettingsLoaded) return;
+    if (!pontoId || !currentViewPath) return;
+
+    const raw = localStorage.getItem(domeSettingsStorageKey);
+    if (raw) return;
+
+    let cancelled = false;
+
+    const loadAlinhamentoFromDatabase = async () => {
+      try {
+        const response = await fetch(
+          `${buildApiUrl(`/ponto/${pontoId}/alinhamento?vista_path=${encodeURIComponent(currentViewPath)}`)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`
+            }
+          }
+        );
+
+        if (!response.ok) return;
+
+        const payload = await response.json().catch(() => null);
+        if (!payload?.success || !payload?.data) return;
+
+        if (cancelled) return;
+
+        const { radius, verticalOffset, rotationX, rotationY, rotationZ, mirrorX, mirrorY } = payload.data;
+        const settings = {
+          radius: Number.isFinite(Number(radius)) ? Number(radius) : DEFAULT_PANORAMA_DOME_RADIUS,
+          verticalOffset: Number.isFinite(Number(verticalOffset)) ? Number(verticalOffset) : 0,
+          rotationX: Number.isFinite(Number(rotationX)) ? Number(rotationX) : DEFAULT_DOME_ROTATION_X,
+          rotationY: Number.isFinite(Number(rotationY)) ? Number(rotationY) : DEFAULT_DOME_ROTATION_Y,
+          rotationZ: Number.isFinite(Number(rotationZ)) ? Number(rotationZ) : DEFAULT_DOME_ROTATION_Z,
+          mirrorX: Boolean(mirrorX),
+          mirrorY: Boolean(mirrorY)
+        };
+
+        setDomeSettingsByView((prev) => ({
+          ...prev,
+          [currentDomeViewKey]: settings
+        }));
+      } catch (error) {
+        console.warn("Falha ao carregar alinhamento do panorama da BD.", error);
+      }
+    };
+
+    loadAlinhamentoFromDatabase();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [API_BASE, buildApiUrl, currentDomeViewKey, currentViewPath, domeSettingsLoaded, domeSettingsStorageKey, pontoId]);
 
   useEffect(() => {
     if (!domeSettingsLoaded) return;

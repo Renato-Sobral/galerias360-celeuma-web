@@ -19,6 +19,7 @@ const themeRoutes = require('./routes/themeRoutes');
 const categoriaPontoRoutes = require('./routes/categoriaPontoRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const editorStateRoutes = require('./routes/editorStateRoutes');
+const pontoAlinhamentoRoutes = require('./routes/pontoAlinhamentoRoutes');
 const mobileRoutes = require('./routes/mobileRoutes');
 const { PRIMARY_UPLOADS_ROOT, LEGACY_UPLOADS_ROOT } = require('./utils/mediaLibrary');
 const { seedDefaultThemePresets } = require('./services/themePresetDefaults');
@@ -98,6 +99,7 @@ app.use('/overlay', mapOverlayRoutes);
 app.use('/theme', themeRoutes);
 app.use('/categoria', categoriaPontoRoutes);
 app.use('/media', mediaRoutes);
+app.use('/ponto', pontoAlinhamentoRoutes);
 app.use('/editor', editorStateRoutes);
 app.use('/mobile', mobileRoutes);
 

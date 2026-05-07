@@ -29,6 +29,35 @@ function formatBytes(size) {
   return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function getExtensionLabel(item) {
+  const extFromItem = String(item?.extension || "").trim().replace(/^\./, "");
+  if (extFromItem) return extFromItem.toUpperCase();
+
+  const fileName = String(item?.name || "");
+  const lastDot = fileName.lastIndexOf(".");
+  if (lastDot <= 0 || lastDot === fileName.length - 1) return "-";
+  return fileName.slice(lastDot + 1).toUpperCase();
+}
+
+function compareMediaItems(a, b, sortBy) {
+  const nameA = String(a?.name || "").toLocaleLowerCase("pt-PT");
+  const nameB = String(b?.name || "").toLocaleLowerCase("pt-PT");
+  const dateA = new Date(a?.modifiedAt || 0).getTime() || 0;
+  const dateB = new Date(b?.modifiedAt || 0).getTime() || 0;
+  const sizeA = Number(a?.size || 0);
+  const sizeB = Number(b?.size || 0);
+
+  if (a?.type === "folder" && b?.type !== "folder") return -1;
+  if (a?.type !== "folder" && b?.type === "folder") return 1;
+
+  if (sortBy === "name_asc") return nameA.localeCompare(nameB, "pt-PT");
+  if (sortBy === "name_desc") return nameB.localeCompare(nameA, "pt-PT");
+  if (sortBy === "size_desc") return sizeB - sizeA;
+  if (sortBy === "size_asc") return sizeA - sizeB;
+  if (sortBy === "updated_asc") return dateA - dateB;
+  return dateB - dateA;
+}
+
 function FilePreview({ selection, accept, previewOnly = false }) {
   const [devicePreviewUrl, setDevicePreviewUrl] = useState(null);
 
@@ -49,6 +78,10 @@ function FilePreview({ selection, accept, previewOnly = false }) {
   const previewUrl = selection.source === "library"
     ? (selection.url || resolveUploadsUrl(selection.path))
     : devicePreviewUrl;
+  const fileName = selection.name || selection.file?.name || "Ficheiro selecionado";
+  const folderPath = selection.path
+    ? selection.path.split("/").slice(0, -1).join("/")
+    : "";
   const label = selection.source === "library" ? "Ficheiro do File Manager" : "Ficheiro do dispositivo";
 
   const previewContent = (
@@ -89,9 +122,13 @@ function FilePreview({ selection, accept, previewOnly = false }) {
     <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">{selection.name || selection.file?.name}</p>
+          <p className="text-sm font-medium text-foreground truncate">{fileName}</p>
           <p className="text-xs text-muted-foreground">{label}</p>
-          {selection.path && <p className="text-xs text-muted-foreground break-all mt-1">/{selection.path}</p>}
+          {selection.path && (
+            <p className="text-xs text-muted-foreground break-all mt-1">
+              Pasta: /{folderPath || ""}
+            </p>
+          )}
         </div>
       </div>
 
@@ -210,6 +247,8 @@ export default function MediaSourceField({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [selectedPath, setSelectedPath] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState("updated_desc");
   const uploadInputRef = useRef(null);
   const inputAccept = useMemo(() => normalizeInputAccept(accept), [accept]);
 
@@ -280,7 +319,18 @@ export default function MediaSourceField({
     [selectableItems, selectedPath]
   );
 
-  const triggerLabel = selection?.name || `Escolher ${label.toLowerCase()}`;
+  const visibleItems = useMemo(() => {
+    const term = searchTerm.trim().toLocaleLowerCase("pt-PT");
+    const filtered = term
+      ? selectableItems.filter((item) => String(item?.name || "").toLocaleLowerCase("pt-PT").includes(term))
+      : selectableItems;
+
+    return [...filtered].sort((a, b) => compareMediaItems(a, b, sortBy));
+  }, [searchTerm, selectableItems, sortBy]);
+
+  const triggerLabel = selection
+    ? `Alterar ${label.toLowerCase()}`
+    : `Escolher ${label.toLowerCase()}`;
 
   const openFolder = async (path) => {
     setCurrentPath(path || "");
@@ -476,7 +526,10 @@ export default function MediaSourceField({
                 )}
               </aside>
 
-              <div className="rounded-xl border border-border bg-card p-4 min-h-0 overflow-y-auto">
+              <div
+                className="rounded-xl border border-border bg-card p-4 min-h-0 overflow-y-auto"
+                style={{ overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}
+              >
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
                   {breadcrumbs.map((crumb, index) => (
                     <div key={crumb.path || "root"} className="inline-flex items-center gap-2">
@@ -492,13 +545,42 @@ export default function MediaSourceField({
                   ))}
                 </div>
 
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Pesquisar ficheiros e pastas..."
+                    className="h-9 min-w-[220px] flex-1 rounded-md border border-border bg-background px-3 text-sm"
+                  />
+                  <select
+                    value={sortBy}
+                    onChange={(event) => setSortBy(event.target.value)}
+                    className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  >
+                    <option value="updated_desc">Mais recentes</option>
+                    <option value="updated_asc">Mais antigos</option>
+                    <option value="name_asc">Nome (A-Z)</option>
+                    <option value="name_desc">Nome (Z-A)</option>
+                    <option value="size_desc">Maior tamanho</option>
+                    <option value="size_asc">Menor tamanho</option>
+                  </select>
+                </div>
+
+                <div className="mb-4 text-xs text-muted-foreground">
+                  {visibleItems.length} item(ns)
+                  {searchTerm.trim() ? ` para "${searchTerm.trim()}"` : ""}
+                </div>
+
                 {loading ? (
                   <p className="text-sm text-muted-foreground">A carregar ficheiros...</p>
                 ) : selectableItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Não existem ficheiros compatíveis nesta pasta.</p>
+                ) : visibleItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sem resultados para a pesquisa atual.</p>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-                    {selectableItems.map((item) => {
+                    {visibleItems.map((item) => {
                       const accepted = item.type === "folder" || fileMatchesAccept(item.name, accept);
                       const isActive = selectedPath === item.path;
                       const Icon = item.type === "folder"
@@ -527,7 +609,11 @@ export default function MediaSourceField({
                           </div>
 
                           <div className="space-y-1 text-sm text-muted-foreground">
-                            <div>Tipo: {item.type === "folder" ? "Pasta" : "Ficheiro"}</div>
+                            {item.type === "folder" ? (
+                              <div>Pasta</div>
+                            ) : (
+                              <div>Extensão: {getExtensionLabel(item)}</div>
+                            )}
                             {item.type === "file" && <div>Tamanho: {formatBytes(item.size)}</div>}
                             <div>Atualizado: {toLabelDate(item.modifiedAt)}</div>
                           </div>

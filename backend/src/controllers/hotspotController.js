@@ -21,7 +21,7 @@ exports.createHotspot = async (req, res) => {
   } catch (error) {
     console.error('Erro ao criar hotspot:', error);
     const errorMessage = error?.message || 'Erro interno ao criar hotspot';
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: errorMessage,
       details: error?.original?.message || null
     });

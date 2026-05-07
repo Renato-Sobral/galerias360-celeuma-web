@@ -149,7 +149,7 @@ export default function PontoDetail() {
       {/* Viewer */}
       <div className="flex-1 overflow-hidden relative">
         {/* Top bar with back button and info toggle */}
-        <div className="absolute top-4 left-4 z-60 flex flex-col items-start gap-2">
+        <div className="absolute top-4 left-4 z-[60] flex flex-col items-start gap-2">
           <Button
             variant="outline"
             size="icon"

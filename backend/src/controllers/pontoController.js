@@ -1,6 +1,7 @@
 const Ponto = require('../models/ponto');
 const CategoriaPonto = require('../models/categoria_ponto');
 const Visualizacao = require('../models/estatistica');
+const PontoAlinhamento = require('../models/ponto_alinhamento');
 const multer = require('multer');
 const logger = require('../models/logger');
 const crypto = require('crypto');
@@ -392,5 +393,45 @@ exports.deletePonto = async (req, res) => {
     } catch (error) {
         console.error("Erro no deletePonto:", error);
         return res.status(500).json({ error: 'Erro ao eliminar ponto' });
+    }
+};
+
+exports.getDetalhes = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const ponto = await Ponto.findByPk(id, {
+            include: [
+                {
+                    model: CategoriaPonto,
+                    as: 'categorias',
+                    attributes: ['id_categoria', 'name'],
+                    through: { attributes: [] },
+                },
+                {
+                    model: PontoAlinhamento,
+                    attributes: ['id_alinhamento', 'vista_path', 'radius', 'verticalOffset', 'rotationX', 'rotationY', 'rotationZ', 'mirrorX', 'mirrorY', 'createdAt', 'updatedAt'],
+                    required: false,
+                },
+            ],
+        });
+
+        if (!ponto) {
+            return res.status(404).json({ success: false, message: 'Ponto não encontrado' });
+        }
+
+        const pontoData = serializePonto(ponto, { request: req });
+        const alinhamentos = ponto.ponto_alinhamentos || [];
+
+        return res.json({
+            success: true,
+            data: {
+                ponto: pontoData,
+                alinhamentos: alinhamentos
+            }
+        });
+
+    } catch (error) {
+        console.error("Erro no getDetalhes:", error);
+        res.status(500).json({ success: false, message: 'Erro ao buscar detalhes do ponto', error });
     }
 };
