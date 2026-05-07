@@ -105,6 +105,51 @@ const DEFAULT_DARK = {
     "chart-5": "340 75% 55%",
 };
 
+const HOTSPOT_ICON_CUSTOM_IMAGE_TYPES = [
+    { key: "imagem", label: "Imagem" },
+    { key: "imagem4p", label: "Imagem 4p" },
+    { key: "modelo3d", label: "Modelo 3D" },
+    { key: "modelo3d_inspect", label: "Inspeção 3D" },
+    { key: "audio", label: "Áudio" },
+    { key: "audioespacial", label: "Áudio 3D" },
+    { key: "video", label: "Vídeo" },
+    { key: "link", label: "Link" },
+    { key: "navegacao", label: "Navegação" },
+];
+
+const HOTSPOT_TEXT_FONTS = [
+    { value: "roboto", label: "Roboto" },
+    { value: "mozillavr", label: "Mozilla VR" },
+    { value: "sourcecodepro", label: "Source Code Pro" },
+    { value: "monoid", label: "Monoid" },
+    { value: "exo2bold", label: "Exo 2 Bold" },
+    { value: "exo2semibold", label: "Exo 2 SemiBold" },
+    { value: "kelsonsans", label: "Kelson Sans" },
+    { value: "dejavu", label: "DejaVu" },
+    { value: "aileronsemibold", label: "Aileron SemiBold" },
+];
+
+const HOTSPOT_TEXT_FONT_PREVIEWS = {
+    roboto: "Roboto, sans-serif",
+    mozillavr: '"Courier New", monospace',
+    sourcecodepro: '"Source Code Pro", monospace',
+    monoid: "monospace",
+    exo2bold: "Arial, sans-serif",
+    exo2semibold: "Arial, sans-serif",
+    kelsonsans: "Verdana, sans-serif",
+    dejavu: "Georgia, serif",
+    aileronsemibold: "Helvetica, Arial, sans-serif",
+};
+
+function getHotspotTextPreviewFont(fontKey) {
+    return HOTSPOT_TEXT_FONT_PREVIEWS[fontKey] || "sans-serif";
+}
+
+function selectionFromStoredValue(value) {
+    const normalizedPath = relativePathFromUploadsUrl(value) || String(value || "").replace(/^\/+/, "");
+    return normalizedPath ? createLibrarySelection(normalizedPath) : null;
+}
+
 /* ── HSL <-> Hex helpers ── */
 function hslStringToHex(hslStr) {
     if (!hslStr) return "#000000";
@@ -401,6 +446,13 @@ export default function PersonalizacaoPage() {
     const [faviconPreview, setFaviconPreview] = useState(null);
     const [savingFavicon, setSavingFavicon] = useState(false);
 
+    // Hotspot icon customization state
+    const [hotspotIconType, setHotspotIconType] = useState("ring");
+    const [hotspotIconColor, setHotspotIconColor] = useState("#06b6d4");
+    const [hotspotCustomIconSelections, setHotspotCustomIconSelections] = useState({});
+    const [hotspotTextFont, setHotspotTextFont] = useState("roboto");
+    const [savingHotspotIcon, setSavingHotspotIcon] = useState(false);
+
     // Form state
     const [name, setName] = useState("");
     const [lightVars, setLightVars] = useState({ ...DEFAULT_LIGHT });
@@ -480,6 +532,28 @@ export default function PersonalizacaoPage() {
         setFaviconPreview(null);
         return undefined;
     }, [faviconSelection]);
+
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem("hotspot_icon_config");
+            if (!stored) return;
+
+            const parsed = JSON.parse(stored);
+            if (parsed?.icon_type) setHotspotIconType(parsed.icon_type);
+            if (parsed?.icon_color) setHotspotIconColor(parsed.icon_color);
+
+            const customIcons = parsed?.custom_icons && typeof parsed.custom_icons === "object" ? parsed.custom_icons : {};
+            const nextSelections = HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.reduce((acc, { key }) => {
+                acc[key] = selectionFromStoredValue(customIcons[key]);
+                return acc;
+            }, {});
+
+            setHotspotCustomIconSelections(nextSelections);
+            if (parsed?.text_font) setHotspotTextFont(parsed.text_font);
+        } catch (err) {
+            console.error(err);
+        }
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -584,6 +658,37 @@ export default function PersonalizacaoPage() {
             alert(err.message || "Erro ao atualizar favicon");
         } finally {
             setSavingFavicon(false);
+        }
+    };
+
+    const handleSaveHotspotIcon = async () => {
+        setSavingHotspotIcon(true);
+        try {
+            const resolvedCustomIcons = {};
+
+            for (const { key } of HOTSPOT_ICON_CUSTOM_IMAGE_TYPES) {
+                const selection = hotspotCustomIconSelections[key];
+                if (!selection) continue;
+
+                const resolvedAsset = await resolveMediaSelection(selection, "media");
+                const storedPath = resolvedAsset?.path || selection.path || "";
+                if (storedPath) {
+                    resolvedCustomIcons[key] = storedPath;
+                }
+            }
+
+            localStorage.setItem("hotspot_icon_config", JSON.stringify({
+                icon_type: hotspotIconType,
+                icon_color: hotspotIconColor,
+                text_font: hotspotTextFont,
+                custom_icons: resolvedCustomIcons,
+            }));
+            alert("Configuração de ícones dos hotspots guardada com sucesso!");
+        } catch (err) {
+            console.error(err);
+            alert(err.message || "Erro ao atualizar configuração de ícones");
+        } finally {
+            setSavingHotspotIcon(false);
         }
     };
 
@@ -831,6 +936,184 @@ export default function PersonalizacaoPage() {
                         </CardContent>
                     </Card>
                 </div>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-lg">Ícones dos Hotspots</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div>
+                            <label className="text-sm font-medium">Tipo de Ícone</label>
+                            <select
+                                value={hotspotIconType}
+                                onChange={(e) => setHotspotIconType(e.target.value)}
+                                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                            >
+                                <option value="ring">Ring (Anel)</option>
+                                <option value="sphere">Sphere (Esfera)</option>
+                                <option value="arrow">Arrow (Seta)</option>
+                                <option value="custom">Custom (Personalizado)</option>
+                            </select>
+                            <p className="text-xs text-muted-foreground mt-2">
+                                Seleciona o tipo de ícone a usar nos hotspots da galeria 360.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="text-sm font-medium">Cor do Ícone</label>
+                            <div className="flex items-center gap-2 mt-1">
+                                <input
+                                    type="color"
+                                    value={hotspotIconColor}
+                                    onChange={(e) => setHotspotIconColor(e.target.value)}
+                                    className="h-10 w-20 rounded-md border border-border cursor-pointer"
+                                />
+                                <input
+                                    type="text"
+                                    value={hotspotIconColor}
+                                    onChange={(e) => setHotspotIconColor(e.target.value)}
+                                    className="flex-1 text-sm bg-muted rounded-md px-3 py-2 border border-border"
+                                    placeholder="#06b6d4"
+                                />
+                            </div>
+                        </div>
+
+                        {hotspotIconType === "custom" && (
+                            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-4">
+                                <div>
+                                    <p className="text-sm font-medium">Fonte do texto</p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        O hotspot do tipo texto usa esta fonte em vez de um ícone.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Fonte para texto</label>
+                                    <select
+                                        value={hotspotTextFont}
+                                        onChange={(e) => setHotspotTextFont(e.target.value)}
+                                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                    >
+                                        {HOTSPOT_TEXT_FONTS.map((font) => (
+                                            <option key={font.value} value={font.value}>{font.label}</option>
+                                        ))}
+                                    </select>
+                                    <div className="rounded-md border border-border bg-background px-3 py-3">
+                                        <span
+                                            className="text-base"
+                                            style={{
+                                                fontFamily: getHotspotTextPreviewFont(hotspotTextFont),
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Amostra de texto 360
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {hotspotIconType === "custom" && (
+                            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-4">
+                                <div>
+                                    <p className="text-sm font-medium">Imagens por tipo de hotspot</p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Define uma imagem para cada tipo. Quando o modo custom estiver ativo, o viewer vai usar a imagem correspondente ao tipo do hotspot.
+                                    </p>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.map(({ key, label }) => (
+                                        <div key={key} className="rounded-md border border-border bg-background p-3 space-y-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm font-medium">{label}</p>
+                                                    <p className="text-xs text-muted-foreground">Imagem usada para este tipo de hotspot.</p>
+                                                </div>
+                                                {hotspotCustomIconSelections[key] && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        className="h-8 px-2 text-xs"
+                                                        onClick={() => {
+                                                            setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: null }));
+                                                        }}
+                                                    >
+                                                        Limpar
+                                                    </Button>
+                                                )}
+                                            </div>
+
+                                            <MediaSourceField
+                                                label={`Ícone ${label}`}
+                                                accept="image/png,image/jpeg,image/svg+xml,image/webp,.png,.jpg,.jpeg,.svg,.webp"
+                                                selection={hotspotCustomIconSelections[key] || null}
+                                                onChange={(selection) => {
+                                                    setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: selection }));
+                                                }}
+                                                destinationPath="media"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-3">
+                            <div>
+                                <p className="text-sm font-medium">Pré-visualização</p>
+                                <div className="mt-2 flex gap-4">
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="w-24 h-24 rounded-md border border-border bg-black flex items-center justify-center relative">
+                                            {hotspotIconType === "ring" && (
+                                                <div 
+                                                    className="rounded-full border-2" 
+                                                    style={{
+                                                        width: "16px",
+                                                        height: "16px",
+                                                        borderColor: hotspotIconColor,
+                                                    }}
+                                                />
+                                            )}
+                                            {hotspotIconType === "sphere" && (
+                                                <div 
+                                                    className="rounded-full" 
+                                                    style={{
+                                                        width: "20px",
+                                                        height: "20px",
+                                                        backgroundColor: hotspotIconColor,
+                                                        opacity: 0.8,
+                                                    }}
+                                                />
+                                            )}
+                                            {hotspotIconType === "arrow" && (
+                                                <div 
+                                                    style={{
+                                                        width: 0,
+                                                        height: 0,
+                                                        borderLeft: "8px solid transparent",
+                                                        borderRight: "8px solid transparent",
+                                                        borderBottom: `16px solid ${hotspotIconColor}`,
+                                                    }}
+                                                />
+                                            )}
+                                            {hotspotIconType === "custom" && (
+                                                <span className="text-2xl">◉</span>
+                                            )}
+                                        </div>
+                                        <span className="text-xs text-muted-foreground">Pré-visualização</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                            <Button onClick={handleSaveHotspotIcon} disabled={savingHotspotIcon}>
+                                {savingHotspotIcon ? "A guardar..." : "Guardar Ícone"}
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
 
                 {orderedPresets.length === 0 ? (
                     <Card>

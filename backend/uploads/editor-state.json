@@ -74,5 +74,60 @@
     },
     "updatedBy": null,
     "savedAt": "2026-04-10T20:00:28.205Z"
+  },
+  "3d:modelos3d/cube.glb": {
+    "type": "3d",
+    "path": "modelos3d/cube.glb",
+    "settings": {
+      "selectedObjectKey": "__root__",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        10,
+        10,
+        10
+      ],
+      "objectTransforms": [
+        {
+          "key": "0/0",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "visible": true,
+          "wireframe": false,
+          "opacity": 0.99609375
+        }
+      ],
+      "lightIntensity": 1,
+      "sceneLightsEnabled": true,
+      "sceneWorldEnabled": true,
+      "hdriPreset": "german_town_street_4k.exr",
+      "hdriRotation": 0,
+      "hdriBlur": 0,
+      "hdriIntensity": 1,
+      "worldOpacity": 1
+    },
+    "updatedBy": null,
+    "savedAt": "2026-05-06T22:10:14.475Z"
   }
 }

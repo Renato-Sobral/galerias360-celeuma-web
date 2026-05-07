@@ -50,7 +50,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const DEFAULT_DOME_ROTATION_Z = 0;
   const DEFAULT_DOME_MIRROR_X = false;
   const DEFAULT_DOME_MIRROR_Y = false;
-  const DEFAULT_AMBIENT_LIGHT_INTENSITY = 0;
+  const DEFAULT_AMBIENT_LIGHT_INTENSITY = 1.5;
   const DEFAULT_POINT_LIGHT_INTENSITY = 1;
   const DEFAULT_POINT_LIGHT_COLOR = "#ffffff";
   const DEFAULT_POINT_LIGHT_DISTANCE = 2200;
@@ -319,6 +319,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const image4pMagnifierCORSBlockedRef = useRef(false);
   const [selectedHotspot, setSelectedHotspot] = useState(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editStep, setEditStep] = useState("type");
   const [domeDialogOpen, setDomeDialogOpen] = useState(false);
   const [showAlignmentGuides, setShowAlignmentGuides] = useState(true);
   const [alignmentGuidesOpacity, setAlignmentGuidesOpacity] = useState(0.65);
@@ -328,6 +329,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editY, setEditY] = useState(0);
   const [editZ, setEditZ] = useState(0);
   const [editStickToGround, setEditStickToGround] = useState(false);
+  const [editHideIcon, setEditHideIcon] = useState(false);
   const [editYaw, setEditYaw] = useState(0);
   const [editPitch, setEditPitch] = useState(0);
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
@@ -1764,46 +1766,105 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     );
   };
 
+  const getHotspotIconConfig = () => {
+    try {
+      const stored = localStorage.getItem("hotspot_icon_config");
+      return stored ? JSON.parse(stored) : { icon_type: "ring", icon_color: "#06b6d4", text_font: "roboto", custom_icons: {} };
+    } catch {
+      return { icon_type: "ring", icon_color: "#06b6d4", text_font: "roboto", custom_icons: {} };
+    }
+  };
+
+  const resolveCustomHotspotIconUrl = (iconConfig, hotspot) => {
+    if (!iconConfig || iconConfig.icon_type !== "custom") return "";
+
+    const customIcons = iconConfig.custom_icons && typeof iconConfig.custom_icons === "object" ? iconConfig.custom_icons : {};
+    const isNavigation = hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back";
+    const typeKey = isNavigation ? "navegacao" : String(hotspot?.tipo || "");
+    const storedValue = customIcons[typeKey] || customIcons[hotspot?.tipo] || customIcons.link || customIcons.default || "";
+
+    if (!storedValue) return "";
+
+    const normalizedPath = relativePathFromUploadsUrl(storedValue) || String(storedValue).replace(/^\/+/, "");
+    return normalizedPath ? resolveUploadsUrl(normalizedPath) || "" : storedValue;
+  };
+
+  const renderCustomHotspotIcon = (iconConfig, hotspot) => {
+    const { icon_type = "ring" } = iconConfig || {};
+    const imageUrl = resolveCustomHotspotIconUrl(iconConfig, hotspot);
+
+    if (icon_type === "custom" && imageUrl) {
+      return (
+        <a-entity>
+          <a-image src={imageUrl} width="18" height="18" position="0 0 0" material="transparent: true; side: double; alphaTest: 0.050" />
+        </a-entity>
+      );
+    }
+
+    return null;
+  };
+
   const tipoToAFrame = {
-    texto: (conteudo) => (
-      <a-entity>
-        <a-text
-          value={String(conteudo || "Texto")}
-          color="white"
-          width="120"
-          wrap-count="22"
-          anchor="center"
-          align="center"
-          baseline="center"
-          side="double"
-          position="0 10 0"
-        />
-      </a-entity>
-    ),
+    texto: (conteudo) => {
+      const iconConfig = getHotspotIconConfig();
+      const textFont = iconConfig.text_font || "roboto";
+
+      return (
+        <a-entity>
+          <a-text
+            value={String(conteudo || "Texto")}
+            color="white"
+            width="120"
+            wrap-count="22"
+            anchor="center"
+            align="center"
+            baseline="center"
+            side="double"
+            position="0 10 0"
+            font={textFont}
+          />
+        </a-entity>
+      );
+    },
 
     imagem: (conteudo) => (
-      <a-entity>
-        {conteudo ? (
-          <a-image src={conteudo} width="30" height="30" position="0 0 0" shadow="cast: true; receive: true" />
-        ) : (
-          <>
-            <a-ring radius-inner="5" radius-outer="7" color="#06b6d4" material="side: double" />
-            <a-text value="Imagem?" color="white" width="70" align="center" position="0 9 0" />
-          </>
-        )}
-      </a-entity>
+      (() => {
+        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "imagem" });
+        if (customIcon) return customIcon;
+
+        return (
+          <a-entity>
+            {conteudo ? (
+              <a-image src={conteudo} width="30" height="30" position="0 0 0" material="transparent: true; alphaTest: 0.050" shadow="cast: true; receive: true" />
+            ) : (
+              <>
+                <a-ring radius-inner="5" radius-outer="7" color="#06b6d4" material="side: double; alphaTest: 0.050" />
+                <a-text value="Imagem?" color="white" width="70" align="center" position="0 9 0" />
+              </>
+            )}
+          </a-entity>
+        );
+      })()
     ),
 
-    imagem4p: () => (
-      <a-entity>
-        <a-ring radius-inner="5" radius-outer="7" color="#0ea5e9" material="side: double" />
-        <a-text value="Imagem 4p" color="white" width="80" align="center" position="0 9 0" />
-      </a-entity>
-    ),
+    imagem4p: () => (() => {
+      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "imagem4p" });
+      if (customIcon) return customIcon;
+
+      return (
+        <a-entity>
+          <a-ring radius-inner="5" radius-outer="7" color="#0ea5e9" material="side: double; alphaTest: 0.050" />
+          <a-text value="Imagem 4p" color="white" width="80" align="center" position="0 9 0" />
+        </a-entity>
+      );
+    })(),
 
     modelo3d: (conteudo, hotspot) => renderModelo3dHotspot(conteudo, hotspot),
 
     modelo3d_inspect: (conteudo, hotspot) => {
+      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), hotspot);
+      if (customIcon) return customIcon;
+
       const payload = decodeInspect3dValue(conteudo);
       if (!payload) return null;
       const currentFloorY = floorY;
@@ -1832,87 +1893,168 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     },
 
     audio: (conteudo) => (
-      <a-entity>
-        <a-ring radius-inner="5" radius-outer="7" color="#a855f7" material="side: double" />
-        <a-text value="Audio" color="white" width="60" align="center" position="0 9 0" />
-        <a-entity
-          sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: false`}
-        ></a-entity>
-      </a-entity>
+      (() => {
+        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "audio" });
+        if (customIcon) return customIcon;
+
+        return (
+          <a-entity>
+            <a-ring radius-inner="5" radius-outer="7" color="#a855f7" material="side: double; alphaTest: 0.050" />
+            <a-text value="Audio" color="white" width="60" align="center" position="0 9 0" />
+            <a-entity
+              sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: false`}
+            ></a-entity>
+          </a-entity>
+        );
+      })()
     ),
 
     audioespacial: (conteudo) => (
-      <a-entity>
-        <a-ring radius-inner="5" radius-outer="7" color="#7c3aed" material="side: double" />
-        <a-text value="Audio 3D" color="white" width="80" align="center" position="0 9 0" />
-        <a-entity
-          sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: true; refDistance: 50; rolloffFactor: 1;`}
-        ></a-entity>
-      </a-entity>
+      (() => {
+        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "audioespacial" });
+        if (customIcon) return customIcon;
+
+        return (
+          <a-entity>
+            <a-ring radius-inner="5" radius-outer="7" color="#7c3aed" material="side: double; alphaTest: 0.050" />
+            <a-text value="Audio 3D" color="white" width="80" align="center" position="0 9 0" />
+            <a-entity
+              sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: true; refDistance: 50; rolloffFactor: 1;`}
+            ></a-entity>
+          </a-entity>
+        );
+      })()
     ),
 
     video: (conteudo) => (
-      <a-entity>
-        <a-ring radius-inner="5" radius-outer="7" color="#f59e0b" material="side: double" />
-        <a-text value={conteudo ? "Video" : "Video?"} color="white" width="60" align="center" position="0 9 0" />
-      </a-entity>
+      (() => {
+        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "video" });
+        if (customIcon) return customIcon;
+
+        return (
+          <a-entity>
+            <a-ring radius-inner="5" radius-outer="7" color="#f59e0b" material="side: double; alphaTest: 0.050" />
+            <a-text value={conteudo ? "Video" : "Video?"} color="white" width="60" align="center" position="0 9 0" />
+          </a-entity>
+        );
+      })()
     ),
 
-    link: (conteudo, hotspot) => (
-      (hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back") ? (
-        <a-entity>
-          <a-ring
-            radius-inner="8"
-            radius-outer="12"
-            color="#22c55e"
-            position="0 0 0"
-            opacity="0.95"
-            material="side: double"
-          />
-          <a-circle
-            radius="7"
-            color="#0b1b10"
-            position="0 0 0.02"
-            opacity="0.9"
-            material="side: double"
-          />
-          {hotspot?.navigation_mode === "back" ? (
-            <a-triangle
-              vertex-a="2.5 4 0.05"
-              vertex-b="2.5 -4 0.05"
-              vertex-c="-4 0 0.05"
-              color="#22c55e"
-              material="side: double"
+    link: (conteudo, hotspot) => {
+      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), hotspot);
+      if (customIcon) return customIcon;
+
+      const isNavigation = hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back";
+
+      if (isNavigation) {
+        const iconConfig = getHotspotIconConfig();
+        const navColor = hotspot?.icon_color || iconConfig.icon_color || "#22c55e";
+
+        if (iconConfig.icon_type === "sphere") {
+          return (
+            <a-entity>
+              <a-sphere position="0 0 0" radius="10" color={navColor} material="opacity: 0.9; transparent: true; alphaTest: 0.050" />
+              <a-text
+                value={hotspot?.navigation_mode === "back" ? "← Voltar" : "→ Próximo"}
+                color="white"
+                width="90"
+                align="center"
+                position="0 16 0"
+              />
+            </a-entity>
+          );
+        } else if (iconConfig.icon_type === "arrow") {
+          return (
+            <a-entity>
+              <a-triangle
+                vertex-a="-6 8 0"
+                vertex-b="6 8 0"
+                vertex-c="0 -8 0"
+                color={navColor}
+                material="side: double; alphaTest: 0.050"
+              />
+              <a-text
+                value={hotspot?.navigation_mode === "back" ? "Anterior" : "Próxima"}
+                color="white"
+                width="90"
+                align="center"
+                position="0 16 0"
+              />
+            </a-entity>
+          );
+        } else if (iconConfig.icon_type === "custom") {
+          return (
+            <a-entity>
+              <a-box position="0 0 0" width="12" height="12" depth="12" color={navColor} material="opacity: 0.8; transparent: true; alphaTest: 0.050" />
+              <a-text
+                value={hotspot?.navigation_mode === "back" ? "←" : "→"}
+                color="white"
+                width="90"
+                align="center"
+                position="0 18 0"
+              />
+            </a-entity>
+          );
+        } else {
+          // Default ring
+          return (
+            <a-entity>
+              <a-ring
+                radius-inner="8"
+                radius-outer="12"
+                color={navColor}
+                position="0 0 0"
+                opacity="0.95"
+                material="side: double; alphaTest: 0.050"
+              />
+              <a-circle
+                radius="7"
+                color="#0b1b10"
+                position="0 0 0.02"
+                opacity="0.9"
+                material="side: double; alphaTest: 0.050"
+              />
+              {hotspot?.navigation_mode === "back" ? (
+                <a-triangle
+                  vertex-a="2.5 4 0.05"
+                  vertex-b="2.5 -4 0.05"
+                  vertex-c="-4 0 0.05"
+                  color={navColor}
+                  material="side: double; alphaTest: 0.050"
+                />
+              ) : (
+                <a-triangle
+                  vertex-a="-2.5 4 0.05"
+                  vertex-b="-2.5 -4 0.05"
+                  vertex-c="4 0 0.05"
+                  color={navColor}
+                  material="side: double; alphaTest: 0.050"
+                />
+              )}
+              <a-text
+                value={hotspot?.navigation_mode === "back" ? "Anterior" : "Proxima vista"}
+                color="white"
+                width="90"
+                align="center"
+                position="0 16 0"
+              />
+            </a-entity>
+          );
+        }
+      } else {
+        return (
+          <>
+            <a-sphere position="0 0 0" radius="16" color="#ff2e63" />
+            <a-link
+              href={conteudo}
+              title={conteudo}
+              position="0 0 0.5"
+              scale="16 16 1"
             />
-          ) : (
-            <a-triangle
-              vertex-a="-2.5 4 0.05"
-              vertex-b="-2.5 -4 0.05"
-              vertex-c="4 0 0.05"
-              color="#22c55e"
-              material="side: double"
-            />
-          )}
-          <a-text
-            value={hotspot?.navigation_mode === "back" ? "Anterior" : "Proxima vista"}
-            color="white"
-            width="90"
-            align="center"
-            position="0 16 0"
-          />
-        </a-entity>
-      ) : (
-        <>
-          <a-sphere position="0 0 0" radius="16" color="#ff2e63" />
-          <a-link
-            href={conteudo}
-            title={conteudo}
-            position="0 0 0.5"
-            scale="16 16 1"
-          />
-        </>
-      )
-    ),
+          </>
+        );
+      }
+    },
   };
 
   const contextMenuOptions = selectedHotspot
@@ -1955,6 +2097,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             id_ponto_destino: navigation.pointId,
             navigation_file_path: navigation.filePath,
             navigation_file_url: navigation.filePath ? resolveUploadsUrl(navigation.filePath) : "",
+            icon_type: h.icon_type,
+            icon_color: h.icon_color,
+            hide_icon: Boolean(h.hide_icon),
           };
         });
 
@@ -2403,6 +2548,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("authToken") || ""}`
         },
         body: JSON.stringify({
           id_ponto: pontoId,
@@ -2412,7 +2558,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         }),
       });
 
-      if (!res.ok) throw new Error("Erro ao guardar hotspot");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData?.error || errorData?.message || `HTTP ${res.status}`;
+        throw new Error(errorMessage);
+      }
 
       const data = await res.json();
       console.log("✅ Hotspot guardado:", data);
@@ -2437,6 +2587,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           id_ponto_destino: "",
           navigation_file_path: "",
           navigation_file_url: "",
+          icon_type: hotspotCriado.icon_type || "ring",
+          icon_color: hotspotCriado.icon_color || "#06b6d4",
+          hide_icon: Boolean(hotspotCriado.hide_icon),
         };
 
         setHotspots((prev) => {
@@ -2453,6 +2606,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditScale(Number(hotspotEditavel.scale) || 1);
         setEditPlacement(String(hotspotEditavel.placement || ""));
         setEditStickToGround(String(hotspotEditavel.placement || "") === "ground");
+        setEditHideIcon(Boolean(hotspotEditavel.hide_icon));
         setPositionAndAnglesFromXYZ(hotspotEditavel.x, hotspotEditavel.y, hotspotEditavel.z);
         setEditPontoDestino(hotspotEditavel.id_ponto_destino || "");
         setEditNavigationSelection(null);
@@ -2478,10 +2632,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditInspect3dButtons([]);
         setIsCapturingImage4pPoints(false);
         setIsCapturingImage4pMaskPoints(false);
+        setEditStep("type");
         setEditDialogOpen(true);
       }
     } catch (err) {
       console.error("❌ Erro ao guardar hotspot:", err);
+      Swal.fire({
+        title: "Erro ao criar hotspot",
+        text: err?.message || "Erro desconhecido ao tentar guardar o hotspot.",
+        icon: "error",
+        confirmButtonColor: "#171717",
+      });
     }
   };
 
@@ -2537,6 +2698,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     try {
       const res = await fetch(buildApiUrl(`/hotspot/${id}`), {
         method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("authToken") || ""}`
+        }
       });
       if (!res.ok) throw new Error("Erro ao eliminar hotspot");
       setHotspots((prev) => prev.filter((h) => h.id !== id));
@@ -2603,17 +2767,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         if (!navigationPath) {
           Swal.fire({
             title: "Destino em falta",
-            text: "Seleciona ou faz upload de um ficheiro HDR/EXR.",
+            text: "Seleciona ou faz upload de um ficheiro de imagem ou vídeo (HDR/EXR, JPG, PNG, GIF, WebP, BMP, SVG, AVIF ou MP4).",
             icon: "warning",
             confirmButtonColor: "#171717",
           });
           return;
         }
 
-        if (!/\.(hdr|exr)$/i.test(navigationPath)) {
+        if (!/\.(hdr|exr|jpg|jpeg|png|gif|webp|bmp|svg|avif|mp4)$/i.test(navigationPath)) {
           Swal.fire({
             title: "Formato inválido",
-            text: "Para navegação por ficheiro, usa apenas HDR/EXR.",
+            text: "Para navegação por ficheiro, usa formatos de imagem ou vídeo suportados (HDR/EXR, JPG, PNG, GIF, WebP, BMP, SVG, AVIF ou MP4).",
             icon: "warning",
             confirmButtonColor: "#171717",
           });
@@ -2780,13 +2944,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     try {
       const res = await fetch(buildApiUrl(`/hotspot/${selectedHotspot.id}`), {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("authToken") || ""}`
+        },
         body: JSON.stringify({
           tipo: finalTipo === "modelo3d_inspect" ? "modelo3d" : finalTipo,
           conteudo: finalConteudo,
           x: finalX,
           y: finalY,
           z: finalZ,
+          hide_icon: Boolean(editHideIcon),
         }),
       });
 
@@ -2813,6 +2981,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         id_ponto_destino: finalPontoDestino,
         navigation_file_path: finalNavigationPath,
         navigation_file_url: finalNavigationPath ? resolveUploadsUrl(finalNavigationPath) : "",
+        icon_type: selectedHotspot.icon_type || "ring",
+        icon_color: selectedHotspot.icon_color || "#06b6d4",
+        hide_icon: Boolean(editHideIcon),
       };
 
       setHotspots((prev) => {
@@ -2970,7 +3141,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         >
           {(!pos.tipo)
             ? <a-sphere position="0 0 0" radius="16" color="red" shadow="cast: true; receive: true" />
-            : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
+            : (pos.hide_icon && !canManageHotspots)
+              ? null
+              : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
 
           {editDialogOpen && selectedHotspot?.id === pos.id && (
             <a-entity face-camera>
@@ -2990,7 +3163,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             position="0 0 0"
             width="25"
             height="25"
-            material="color: #fff; opacity: 0; side: double"
+            material="color: #fff; opacity: 0; side: double; alphaTest: 1.000"
             transparent="true"
             rotation="0 0 0"
             shadow="cast: false; receive: false"
@@ -3395,6 +3568,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       ? selectedHotspot.navigation_mode
                       : (selectedHotspot.id_ponto_destino ? "point" : (selectedHotspot.navigation_file_path ? "file" : "file"))
                   );
+                  setEditHideIcon(Boolean(selectedHotspot.hide_icon));
+                  setEditStep("type");
                   setEditDialogOpen(true);
                 }
               } else if (value === "delete") {
@@ -3609,660 +3784,732 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       >
         {selectedHotspot && (
           <div className="flex flex-col gap-2 mt-2">
-            <label className="text-sm font-medium">Tipo:</label>
-            <DropdownSingle
-              label={tipos.find(t => t.value === editTipo)?.label || "Seleciona o tipo"}
-              selectlabel="Tipo de Hotspot"
-              items={tipos}
-              onSelect={(value) => setEditTipo(value)}
-              className="mt-1"
-            />
-
-            <label className="text-sm font-medium">Conteúdo:</label>
-            {editTipo === "modelo3d" ? (
-              <MediaSourceField
-                label="Modelo 3D (GLB/GLTF)"
-                accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
-                selection={editModelSelection}
-                onChange={(selection) => {
-                  setEditModelSelection(selection);
-                  if (!selection) {
-                    setEditConteudo("");
-                    return;
-                  }
-
-                  if (selection.source === "library") {
-                    setEditConteudo(selection.url || resolveUploadsUrl(selection.path || "") || "");
-                    return;
-                  }
-
-                  setEditConteudo(selection.file?.name || "");
-                }}
-                destinationPath="modelos3d"
-                helperText="Escolhe ou envia um ficheiro GLB/GLTF no File Manager para importar no A-Frame."
-              />
-            ) : editTipo === "modelo3d_inspect" ? (
-              <div className="flex flex-col gap-2">
-                <MediaSourceField
-                  label="Modelo 3D Inspeção (GLB/GLTF)"
-                  accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
-                  selection={editModelSelection}
-                  onChange={(selection) => {
-                    setEditModelSelection(selection);
-                    if (!selection) {
-                      setEditInspect3dSrc(null);
-                      return;
-                    }
-
-                    if (selection.source === "library") {
-                      setEditInspect3dSrc(selection.url || resolveUploadsUrl(selection.path || "") || "");
-                      return;
-                    }
-
-                    setEditInspect3dSrc(selection.file?.name || "");
-                  }}
-                  destinationPath="modelos3d"
-                  helperText="Selecione o modelo para rotação e inspeção."
-                />
-
-                <label className="text-sm font-medium mt-1">Eixo de Rotação:</label>
-                <select
-                  value={editInspect3dAxis}
-                  onChange={(e) => setEditInspect3dAxis(e.target.value)}
-                  className="border rounded px-2 py-1 text-sm dark:bg-black"
+            {/* Tabs/Steps Navigation */}
+            <div className="flex gap-1 mb-3 border-b border-black/10 overflow-x-auto">
+              {["type", "content", "position", "transform", "styling", editTipo === "navegacao" ? "navigation" : null].filter(Boolean).map((step) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() => setEditStep(step)}
+                  className={`px-3 py-2 text-xs font-medium whitespace-nowrap rounded-t border-b-2 transition-colors ${editStep === step
+                    ? "border-b-black text-black"
+                    : "border-b-transparent text-neutral-600 hover:text-black"
+                    }`}
                 >
-                  <option value="x">X</option>
-                  <option value="y">Y</option>
-                  <option value="z">Z</option>
-                </select>
+                  {step === "type" && "Tipo"}
+                  {step === "content" && "Conteúdo"}
+                  {step === "position" && "Posição"}
+                  {step === "transform" && "Transformação"}
+                  {step === "styling" && "Estilo"}
+                  {step === "navigation" && "Navegação"}
+                </button>
+              ))}
+            </div>
 
-                <label className="text-sm font-medium mt-1">Velocidade de Rotação:</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={editInspect3dRotationSpeed}
-                  onChange={(e) => setEditInspect3dRotationSpeed(parseFloat(e.target.value))}
-                  className="border rounded px-2 py-1 text-sm dark:bg-black"
-                />
-
-                <label className="text-sm font-medium mt-1">Botões de Ação:</label>
-                <div className="border border-black/10 rounded p-2 flex flex-col gap-2 max-h-40 overflow-y-auto">
-                  {editInspect3dButtons.map((btn, index) => (
-                    <div key={index} className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        placeholder="Label do botão"
-                        value={btn.label}
-                        onChange={(e) => {
-                          const newBtns = [...editInspect3dButtons];
-                          newBtns[index].label = e.target.value;
-                          setEditInspect3dButtons(newBtns);
-                        }}
-                        className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
-                      />
-                      <input
-                        type="text"
-                        placeholder="URL (https://...)"
-                        value={btn.url}
-                        onChange={(e) => {
-                          const newBtns = [...editInspect3dButtons];
-                          newBtns[index].url = e.target.value;
-                          setEditInspect3dButtons(newBtns);
-                        }}
-                        className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newBtns = editInspect3dButtons.filter((_, i) => i !== index);
-                          setEditInspect3dButtons(newBtns);
-                        }}
-                        className="text-red-500 hover:text-red-700 font-bold px-2"
-                      >
-                        X
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setEditInspect3dButtons([...editInspect3dButtons, { label: "", url: "" }])}
-                    className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white self-start"
-                  >
-                    + Adicionar botão
-                  </button>
-                </div>
-              </div>
-            ) : editTipo === "imagem4p" ? (
+            {/* Step 1: Tipo */}
+            {editStep === "type" && (
               <div className="flex flex-col gap-2">
-                <MediaSourceField
-                  label="Imagem (warp 4 pontos)"
-                  accept="image/*"
-                  selection={editImage4pSelection}
-                  onChange={(selection) => {
-                    if (typeof editImage4pPreviewUrl === "string" && editImage4pPreviewUrl.startsWith("blob:")) {
-                      try {
-                        URL.revokeObjectURL(editImage4pPreviewUrl);
-                      } catch {
-                        // ignore
-                      }
+                <label className="text-sm font-medium">Tipo de Hotspot:</label>
+                <DropdownSingle
+                  label={tipos.find(t => t.value === editTipo)?.label || "Seleciona o tipo"}
+                  selectlabel="Tipo de Hotspot"
+                  items={tipos}
+                  onSelect={(value) => {
+                    setEditTipo(value);
+                    // Se muda para um tipo que não é navegacao e está no step navegacao, volta para styling
+                    if (value !== "navegacao" && editStep === "navigation") {
+                      setEditStep("styling");
                     }
-
-                    setEditImage4pSelection(selection);
-
-                    if (!selection) {
-                      setEditImage4pPreviewUrl("");
-                      return;
-                    }
-
-                    if (selection.source === "library") {
-                      setEditImage4pPreviewUrl(selection.url || resolveUploadsUrl(selection.path || "") || "");
-                      return;
-                    }
-
-                    if (selection.source === "device" && selection.file) {
-                      setEditImage4pPreviewUrl(URL.createObjectURL(selection.file));
-                      return;
-                    }
-
-                    setEditImage4pPreviewUrl("");
                   }}
-                  destinationPath="media"
-                  helperText="Escolhe ou envia a imagem que queres projetar no outdoor/mupi."
+                  className="mt-1"
                 />
+              </div>
+            )}
 
-                <div className="rounded border border-black/10 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-medium">Pontos: {Array.isArray(editImage4pPoints) ? editImage4pPoints.length : 0} (mín. 4)</div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCapturingImage4pMaskPoints(false);
-                        setIsCapturingImage4pPoints((prev) => !prev);
+            {/* Step 2: Content */}
+            {editStep === "content" && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">Conteúdo:</label>
+                {editTipo === "modelo3d" ? (
+                  <MediaSourceField
+                    label="Modelo 3D (GLB/GLTF)"
+                    accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
+                    selection={editModelSelection}
+                    onChange={(selection) => {
+                      setEditModelSelection(selection);
+                      if (!selection) {
+                        setEditConteudo("");
+                        return;
+                      }
+
+                      if (selection.source === "library") {
+                        setEditConteudo(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                        return;
+                      }
+
+                      setEditConteudo(selection.file?.name || "");
+                    }}
+                    destinationPath="modelos3d"
+                    helperText="Escolhe ou envia um ficheiro GLB/GLTF no File Manager para importar no A-Frame."
+                  />
+                ) : editTipo === "modelo3d_inspect" ? (
+                  <div className="flex flex-col gap-2">
+                    <MediaSourceField
+                      label="Modelo 3D Inspeção (GLB/GLTF)"
+                      accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
+                      selection={editModelSelection}
+                      onChange={(selection) => {
+                        setEditModelSelection(selection);
+                        if (!selection) {
+                          setEditInspect3dSrc(null);
+                          return;
+                        }
+
+                        if (selection.source === "library") {
+                          setEditInspect3dSrc(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                          return;
+                        }
+
+                        setEditInspect3dSrc(selection.file?.name || "");
                       }}
-                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                    >
-                      {isCapturingImage4pPoints ? "Parar captura" : "Capturar no 360"}
-                    </button>
-                  </div>
-                  {isCapturingImage4pPoints && (
-                    <div className="mt-1 text-xs text-neutral-600">
-                      Clica no 360 para adicionar pontos (em ordem à volta do outdoor).
-                    </div>
-                  )}
+                      destinationPath="modelos3d"
+                      helperText="Selecione o modelo para rotação e inspeção."
+                    />
 
-                  <div className="mt-3 rounded border border-black/10 p-2">
-                    <label className="text-xs font-medium">Profundidade / Oclusão</label>
+                    <label className="text-sm font-medium mt-1">Eixo de Rotação:</label>
                     <select
-                      value={editImage4pDepthMode}
-                      onChange={(e) => setEditImage4pDepthMode(e.target.value === "occlusion-mask" ? "occlusion-mask" : "none")}
-                      className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-black"
+                      value={editInspect3dAxis}
+                      onChange={(e) => setEditInspect3dAxis(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm dark:bg-black"
                     >
-                      <option value="none">Sem oclusão</option>
-                      <option value="occlusion-mask">Máscara de oclusão (objetos à frente)</option>
+                      <option value="x">X</option>
+                      <option value="y">Y</option>
+                      <option value="z">Z</option>
                     </select>
 
-                    {editImage4pDepthMode === "occlusion-mask" && (
-                      <>
-                        <div className="mt-2 text-xs text-neutral-600">
-                          Define uma máscara para os objetos em primeiro plano (ex.: poste). A imagem 4 pontos ficará atrás dessa máscara.
-                        </div>
+                    <label className="text-sm font-medium mt-1">Velocidade de Rotação:</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={editInspect3dRotationSpeed}
+                      onChange={(e) => setEditInspect3dRotationSpeed(parseFloat(e.target.value))}
+                      className="border rounded px-2 py-1 text-sm dark:bg-black"
+                    />
 
-                        <div className="mt-2 flex items-center justify-between gap-2">
-                          <div className="text-sm font-medium">Máscara: {Array.isArray(editImage4pOcclusionMaskPoints) ? editImage4pOcclusionMaskPoints.length : 0} pontos (mín. 3)</div>
+                    <label className="text-sm font-medium mt-1">Botões de Ação:</label>
+                    <div className="border border-black/10 rounded p-2 flex flex-col gap-2 max-h-40 overflow-y-auto">
+                      {editInspect3dButtons.map((btn, index) => (
+                        <div key={index} className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            placeholder="Label do botão"
+                            value={btn.label}
+                            onChange={(e) => {
+                              const newBtns = [...editInspect3dButtons];
+                              newBtns[index].label = e.target.value;
+                              setEditInspect3dButtons(newBtns);
+                            }}
+                            className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
+                          />
+                          <input
+                            type="text"
+                            placeholder="URL (https://...)"
+                            value={btn.url}
+                            onChange={(e) => {
+                              const newBtns = [...editInspect3dButtons];
+                              newBtns[index].url = e.target.value;
+                              setEditInspect3dButtons(newBtns);
+                            }}
+                            className="border rounded px-2 py-1 text-sm flex-1 dark:bg-black"
+                          />
                           <button
                             type="button"
                             onClick={() => {
-                              setIsCapturingImage4pPoints(false);
-                              setIsCapturingImage4pMaskPoints((prev) => !prev);
+                              const newBtns = editInspect3dButtons.filter((_, i) => i !== index);
+                              setEditInspect3dButtons(newBtns);
                             }}
-                            className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                            className="text-red-500 hover:text-red-700 font-bold px-2"
                           >
-                            {isCapturingImage4pMaskPoints ? "Parar máscara" : "Capturar máscara no 360"}
+                            X
                           </button>
                         </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setEditInspect3dButtons([...editInspect3dButtons, { label: "", url: "" }])}
+                        className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white self-start"
+                      >
+                        + Adicionar botão
+                      </button>
+                    </div>
+                  </div>
+                ) : editTipo === "imagem4p" ? (
+                  <div className="flex flex-col gap-2">
+                    <MediaSourceField
+                      label="Imagem (warp 4 pontos)"
+                      accept="image/*"
+                      selection={editImage4pSelection}
+                      onChange={(selection) => {
+                        if (typeof editImage4pPreviewUrl === "string" && editImage4pPreviewUrl.startsWith("blob:")) {
+                          try {
+                            URL.revokeObjectURL(editImage4pPreviewUrl);
+                          } catch {
+                            // ignore
+                          }
+                        }
 
-                        {isCapturingImage4pMaskPoints && (
-                          <div className="mt-1 text-xs text-neutral-600">
-                            Clica no 360 para desenhar o contorno do objeto que deve ficar à frente.
-                          </div>
+                        setEditImage4pSelection(selection);
+
+                        if (!selection) {
+                          setEditImage4pPreviewUrl("");
+                          return;
+                        }
+
+                        if (selection.source === "library") {
+                          setEditImage4pPreviewUrl(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                          return;
+                        }
+
+                        if (selection.source === "device" && selection.file) {
+                          setEditImage4pPreviewUrl(URL.createObjectURL(selection.file));
+                          return;
+                        }
+
+                        setEditImage4pPreviewUrl("");
+                      }}
+                      destinationPath="media"
+                      helperText="Escolhe ou envia a imagem que queres projetar no outdoor/mupi."
+                    />
+
+                    <div className="rounded border border-black/10 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium">Pontos: {Array.isArray(editImage4pPoints) ? editImage4pPoints.length : 0} (mín. 4)</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCapturingImage4pMaskPoints(false);
+                            setIsCapturingImage4pPoints((prev) => !prev);
+                          }}
+                          className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                        >
+                          {isCapturingImage4pPoints ? "Parar captura" : "Capturar no 360"}
+                        </button>
+                      </div>
+                      {isCapturingImage4pPoints && (
+                        <div className="mt-1 text-xs text-neutral-600">
+                          Clica no 360 para adicionar pontos (em ordem à volta do outdoor).
+                        </div>
+                      )}
+
+                      <div className="mt-3 rounded border border-black/10 p-2">
+                        <label className="text-xs font-medium">Profundidade / Oclusão</label>
+                        <select
+                          value={editImage4pDepthMode}
+                          onChange={(e) => setEditImage4pDepthMode(e.target.value === "occlusion-mask" ? "occlusion-mask" : "none")}
+                          className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-black"
+                        >
+                          <option value="none">Sem oclusão</option>
+                          <option value="occlusion-mask">Máscara de oclusão (objetos à frente)</option>
+                        </select>
+
+                        {editImage4pDepthMode === "occlusion-mask" && (
+                          <>
+                            <div className="mt-2 text-xs text-neutral-600">
+                              Define uma máscara para os objetos em primeiro plano (ex.: poste). A imagem 4 pontos ficará atrás dessa máscara.
+                            </div>
+
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <div className="text-sm font-medium">Máscara: {Array.isArray(editImage4pOcclusionMaskPoints) ? editImage4pOcclusionMaskPoints.length : 0} pontos (mín. 3)</div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsCapturingImage4pPoints(false);
+                                  setIsCapturingImage4pMaskPoints((prev) => !prev);
+                                }}
+                                className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                              >
+                                {isCapturingImage4pMaskPoints ? "Parar máscara" : "Capturar máscara no 360"}
+                              </button>
+                            </div>
+
+                            {isCapturingImage4pMaskPoints && (
+                              <div className="mt-1 text-xs text-neutral-600">
+                                Clica no 360 para desenhar o contorno do objeto que deve ficar à frente.
+                              </div>
+                            )}
+
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditImage4pOcclusionMaskPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
+                                className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                              >
+                                Remover último (máscara)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditImage4pOcclusionMaskPoints([])}
+                                className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                              >
+                                Limpar máscara
+                              </button>
+                            </div>
+
+                            <div className="mt-2 flex flex-col gap-1">
+                              <label className="text-xs font-medium">Inset da máscara (aprox. câmara)</label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={editImage4pOcclusionMaskInset}
+                                onChange={(e) => {
+                                  const next = parseFloat(e.target.value);
+                                  if (!Number.isFinite(next)) return;
+                                  setEditImage4pOcclusionMaskInset(next);
+                                }}
+                                className="border rounded px-2 py-1 text-sm dark:bg-black"
+                              />
+                            </div>
+                          </>
                         )}
+                      </div>
 
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setEditImage4pOcclusionMaskPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
-                            className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                          >
-                            Remover último (máscara)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditImage4pOcclusionMaskPoints([])}
-                            className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                          >
-                            Limpar máscara
-                          </button>
-                        </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nx = Number(editX);
+                            const ny = Number(editY);
+                            const nz = Number(editZ);
+                            if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
+                            setEditImage4pPoints((prev) => [...(Array.isArray(prev) ? prev : []), { x: nx, y: ny, z: nz }]);
+                          }}
+                          className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                        >
+                          Adicionar ponto (XYZ atual)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditImage4pPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
+                          className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                        >
+                          Remover último
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditImage4pPoints([])}
+                          className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                        >
+                          Limpar
+                        </button>
+                      </div>
 
-                        <div className="mt-2 flex flex-col gap-1">
-                          <label className="text-xs font-medium">Inset da máscara (aprox. câmara)</label>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium">Opacidade</label>
                           <input
-                            type="number"
-                            step="0.1"
-                            value={editImage4pOcclusionMaskInset}
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={editImage4pOpacity}
                             onChange={(e) => {
                               const next = parseFloat(e.target.value);
                               if (!Number.isFinite(next)) return;
-                              setEditImage4pOcclusionMaskInset(next);
+                              setEditImage4pOpacity(Math.max(0, Math.min(1, next)));
+                            }}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium">Brilho: {Number(editImage4pBrightness || 0).toFixed(2)}</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.05"
+                            value={editImage4pBrightness}
+                            onChange={(e) => {
+                              const next = parseFloat(e.target.value);
+                              if (!Number.isFinite(next)) return;
+                              setEditImage4pBrightness(Math.max(0, Math.min(5, next)));
+                            }}
+                            className="w-full accent-black"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium">Inset (evitar z-fight)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={editImage4pInset}
+                            onChange={(e) => {
+                              const next = parseFloat(e.target.value);
+                              if (!Number.isFinite(next)) return;
+                              setEditImage4pInset(next);
                             }}
                             className="border rounded px-2 py-1 text-sm dark:bg-black"
                           />
                         </div>
-                      </>
-                    )}
-                  </div>
+                      </div>
 
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nx = Number(editX);
-                        const ny = Number(editY);
-                        const nz = Number(editZ);
-                        if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
-                        setEditImage4pPoints((prev) => [...(Array.isArray(prev) ? prev : []), { x: nx, y: ny, z: nz }]);
-                      }}
-                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                    >
-                      Adicionar ponto (XYZ atual)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditImage4pPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
-                      className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                    >
-                      Remover último
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditImage4pPoints([])}
-                      className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                    >
-                      Limpar
-                    </button>
-                  </div>
+                      <div className="mt-2 grid grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium">Rotação (°)</label>
+                          <input
+                            type="number"
+                            step="1"
+                            value={editImage4pRotateDeg}
+                            onChange={(e) => {
+                              const next = parseFloat(e.target.value);
+                              if (!Number.isFinite(next)) return;
+                              setEditImage4pRotateDeg(next);
+                            }}
+                            className="border rounded px-2 py-1 text-sm dark:bg-black"
+                          />
+                        </div>
 
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium">Opacidade</label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={editImage4pOpacity}
-                        onChange={(e) => {
-                          const next = parseFloat(e.target.value);
-                          if (!Number.isFinite(next)) return;
-                          setEditImage4pOpacity(Math.max(0, Math.min(1, next)));
-                        }}
-                        className="w-full accent-black"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium">Brilho: {Number(editImage4pBrightness || 0).toFixed(2)}</label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.05"
-                        value={editImage4pBrightness}
-                        onChange={(e) => {
-                          const next = parseFloat(e.target.value);
-                          if (!Number.isFinite(next)) return;
-                          setEditImage4pBrightness(Math.max(0, Math.min(5, next)));
-                        }}
-                        className="w-full accent-black"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium">Inset (evitar z-fight)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={editImage4pInset}
-                        onChange={(e) => {
-                          const next = parseFloat(e.target.value);
-                          if (!Number.isFinite(next)) return;
-                          setEditImage4pInset(next);
-                        }}
-                        className="border rounded px-2 py-1 text-sm dark:bg-black"
-                      />
+                        <div className="flex items-end">
+                          <label className="flex items-center gap-2 text-xs font-medium">
+                            <input
+                              type="checkbox"
+                              checked={editImage4pFlipX}
+                              onChange={(e) => setEditImage4pFlipX(Boolean(e.target.checked))}
+                              className="accent-black"
+                            />
+                            Espelhar H
+                          </label>
+                        </div>
+
+                        <div className="flex items-end">
+                          <label className="flex items-center gap-2 text-xs font-medium">
+                            <input
+                              type="checkbox"
+                              checked={editImage4pFlipY}
+                              onChange={(e) => setEditImage4pFlipY(Boolean(e.target.checked))}
+                              className="accent-black"
+                            />
+                            Espelhar V
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                ) : editTipo === "imagem" ? (
+                  <MediaSourceField
+                    label="Imagem (Media Library)"
+                    accept="image/*"
+                    selection={editImageSelection}
+                    onChange={(selection) => {
+                      setEditImageSelection(selection);
+                      if (!selection) {
+                        setEditConteudo("");
+                        return;
+                      }
 
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium">Rotação (°)</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={editImage4pRotateDeg}
-                        onChange={(e) => {
-                          const next = parseFloat(e.target.value);
-                          if (!Number.isFinite(next)) return;
-                          setEditImage4pRotateDeg(next);
-                        }}
-                        className="border rounded px-2 py-1 text-sm dark:bg-black"
-                      />
-                    </div>
+                      if (selection.source === "library") {
+                        setEditConteudo(selection.url || resolveUploadsUrl(selection.path || "") || "");
+                        return;
+                      }
 
-                    <div className="flex items-end">
-                      <label className="flex items-center gap-2 text-xs font-medium">
-                        <input
-                          type="checkbox"
-                          checked={editImage4pFlipX}
-                          onChange={(e) => setEditImage4pFlipX(Boolean(e.target.checked))}
-                          className="accent-black"
-                        />
-                        Espelhar H
-                      </label>
-                    </div>
-
-                    <div className="flex items-end">
-                      <label className="flex items-center gap-2 text-xs font-medium">
-                        <input
-                          type="checkbox"
-                          checked={editImage4pFlipY}
-                          onChange={(e) => setEditImage4pFlipY(Boolean(e.target.checked))}
-                          className="accent-black"
-                        />
-                        Espelhar V
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : editTipo === "imagem" ? (
-              <MediaSourceField
-                label="Imagem (Media Library)"
-                accept="image/*"
-                selection={editImageSelection}
-                onChange={(selection) => {
-                  setEditImageSelection(selection);
-                  if (!selection) {
-                    setEditConteudo("");
-                    return;
-                  }
-
-                  if (selection.source === "library") {
-                    setEditConteudo(selection.url || resolveUploadsUrl(selection.path || "") || "");
-                    return;
-                  }
-
-                  setEditConteudo(selection.file?.name || "");
-                }}
-                destinationPath="media"
-                helperText="Escolhe ou envia uma imagem no File Manager para exibir."
-              />
-            ) : (
-              <input
-                type="text"
-                value={editConteudo}
-                onChange={(e) => setEditConteudo(e.target.value)}
-                disabled={editTipo === "navegacao"}
-                className="border rounded px-2 py-1 dark:bg-black"
-              />
-            )}
-
-            <label className="text-sm font-medium mt-2">Posição X: {(Number(editX) || 0).toFixed(1)}</label>
-            <input
-              type="range"
-              min={positionSliderMin}
-              max={positionSliderMax}
-              step="0.1"
-              value={Number(editX) || 0}
-              onChange={(e) => {
-                const next = parseFloat(e.target.value);
-                if (!Number.isFinite(next)) return;
-                setPositionAndAnglesFromXYZ(next, editY, editZ);
-              }}
-              className="w-full accent-black"
-            />
-
-            <label className="inline-flex items-center gap-2 text-sm font-medium mt-2">
-              <input
-                type="checkbox"
-                checked={editStickToGround}
-                onChange={(e) => {
-                  const enabled = Boolean(e.target.checked);
-                  setEditStickToGround(enabled);
-                  if (enabled) {
-                    setPositionAndAnglesFromXYZ(editX, floorY, editZ);
-                  }
-                }}
-                className="accent-black"
-              />
-              Stick to ground
-            </label>
-
-            {editStickToGround && (
-              <div className="rounded border border-black/10 p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-neutral-700">Clica no plano para posicionar rapidamente.</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsPickingGroundPosition((prev) => !prev)}
-                    className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                  >
-                    {isPickingGroundPosition ? "Parar colocacao" : "Colocar no plano"}
-                  </button>
-                </div>
+                      setEditConteudo(selection.file?.name || "");
+                    }}
+                    destinationPath="media"
+                    helperText="Escolhe ou envia uma imagem no File Manager para exibir."
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={editConteudo}
+                    onChange={(e) => setEditConteudo(e.target.value)}
+                    disabled={editTipo === "navegacao"}
+                    className="border rounded px-2 py-1 dark:bg-black"
+                  />
+                )}
               </div>
             )}
 
-            <label className="text-sm font-medium">
-              {editStickToGround ? "Posição Y (plano):" : "Posição Y:"} {editStickToGround ? (Number(editZ) || 0).toFixed(1) : (Number(editY) || 0).toFixed(1)}
-            </label>
-            <input
-              type="range"
-              min={positionSliderMin}
-              max={positionSliderMax}
-              step="0.1"
-              value={editStickToGround ? (Number(editZ) || 0) : (Number(editY) || 0)}
-              onChange={(e) => {
-                const next = parseFloat(e.target.value);
-                if (!Number.isFinite(next)) return;
-                if (editStickToGround) {
-                  setPositionAndAnglesFromXYZ(editX, floorY, next);
-                  return;
-                }
-                setPositionAndAnglesFromXYZ(editX, next, editZ);
-              }}
-              className="w-full accent-black"
-            />
-
-            {!editStickToGround && (
-              <>
-                <label className="text-sm font-medium">Posição Z: {(Number(editZ) || 0).toFixed(1)}</label>
+            {/* Step 3: Position */}
+            {editStep === "position" && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium mt-2">Posição X: {(Number(editX) || 0).toFixed(1)}</label>
                 <input
                   type="range"
                   min={positionSliderMin}
                   max={positionSliderMax}
                   step="0.1"
-                  value={Number(editZ) || 0}
+                  value={Number(editX) || 0}
                   onChange={(e) => {
                     const next = parseFloat(e.target.value);
                     if (!Number.isFinite(next)) return;
-                    setPositionAndAnglesFromXYZ(editX, editY, next);
+                    setPositionAndAnglesFromXYZ(next, editY, editZ);
                   }}
                   className="w-full accent-black"
                 />
-              </>
-            )}
 
-            <label className="text-sm font-medium mt-2">Rotação horizontal (Yaw): {Math.round(editYaw)}°</label>
-            <input
-              type="range"
-              min="-180"
-              max="180"
-              step="1"
-              value={editYaw}
-              onChange={(e) => {
-                const nextYaw = parseFloat(e.target.value);
-                if (!Number.isFinite(nextYaw)) return;
-                setEditYaw(nextYaw);
-              }}
-              className="w-full accent-black"
-            />
+                <label className="inline-flex items-center gap-2 text-sm font-medium mt-2">
+                  <input
+                    type="checkbox"
+                    checked={editStickToGround}
+                    onChange={(e) => {
+                      const enabled = Boolean(e.target.checked);
+                      setEditStickToGround(enabled);
+                      if (enabled) {
+                        setPositionAndAnglesFromXYZ(editX, floorY, editZ);
+                      }
+                    }}
+                    className="accent-black"
+                  />
+                  Stick to ground
+                </label>
 
-            <label className="text-sm font-medium">Rotação vertical (Pitch): {Math.round(editPitch)}°</label>
-            <input
-              type="range"
-              min="-80"
-              max="80"
-              step="1"
-              value={editPitch}
-              onChange={(e) => {
-                const nextPitch = parseFloat(e.target.value);
-                if (!Number.isFinite(nextPitch)) return;
-                setEditPitch(nextPitch);
-              }}
-              className="w-full accent-black"
-            />
-
-            <label className="text-sm font-medium">Distância ao centro: {Math.round(editRadius)}</label>
-            <input
-              type="range"
-              min="100"
-              max={domeRadius}
-              step="1"
-              value={editRadius}
-              onChange={(e) => {
-                const nextRadius = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRadius)) return;
-                setPositionFromRadius(nextRadius);
-              }}
-              className="w-full accent-black"
-            />
-
-            <label className="text-sm font-medium">Escala do hotspot: {(Number(editScale) || 1).toFixed(2)}x</label>
-            <input
-              type="range"
-              min="0.4"
-              max={Math.max(20, Math.ceil(Number(editScale) || 1))}
-              step="0.05"
-              value={Number(editScale) || 1}
-              onChange={(e) => {
-                const nextScale = parseFloat(e.target.value);
-                if (!Number.isFinite(nextScale)) return;
-                setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
-              }}
-              className="w-full accent-black"
-            />
-            <input
-              type="number"
-              min="0.4"
-              step="0.05"
-              value={(Number(editScale) || 1).toFixed(2)}
-              onChange={(e) => {
-                const nextScale = parseFloat(e.target.value);
-                if (!Number.isFinite(nextScale)) return;
-                setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
-              }}
-              className="border rounded px-2 py-1 dark:bg-black"
-            />
-
-            {editTipo === "navegacao" && (
-              <>
-                <label className="text-sm font-medium mt-2">Destino de navegação:</label>
-                <DropdownSingle
-                  label={
-                    editNavigationMode === "back"
-                      ? "Anterior"
-                      : (editNavigationMode === "point" ? "Outro ponto" : "Proxima vista (HDR/EXR)")
-                  }
-                  selectlabel="Destino"
-                  items={[
-                    { label: "Proxima vista (HDR/EXR)", value: "file" },
-                    { label: "Outro ponto", value: "point" },
-                    { label: "Anterior", value: "back" },
-                  ]}
-                  onSelect={(value) => {
-                    setEditNavigationMode(value);
-                    if (value === "back") {
-                      setEditPontoDestino("");
-                      setEditNavigationSelection(null);
-                      setEditNavigationPath("");
-                      return;
-                    }
-                    if (value === "point") {
-                      setEditNavigationSelection(null);
-                      setEditNavigationPath("");
-                      return;
-                    }
-                    setEditPontoDestino("");
-                  }}
-                  className="mt-1"
-                />
-
-                {editNavigationMode === "file" && (
-                  <>
-                    <label className="text-sm font-medium mt-2">Vista (HDR/EXR):</label>
-                    <MediaSourceField
-                      label="Ficheiro de navegação"
-                      accept="image/*,.hdr,.exr"
-                      selection={editNavigationSelection}
-                      onChange={(selection) => {
-                        setEditNavigationSelection(selection);
-                        setEditPontoDestino("");
-                        setEditNavigationMode("file");
-                      }}
-                      destinationPath="pontos"
-                      helperText="Escolhe ou envia um HDR/EXR para navegar entre vistas dentro deste ponto inicial."
-                    />
-                  </>
-                )}
-
-                {editNavigationMode === "point" && (
-                  <>
-                    <label className="text-sm font-medium mt-2">Ponto de destino:</label>
-                    <DropdownSingle
-                      label={destinoLabel}
-                      selectlabel="Pontos disponíveis"
-                      items={pontosDestino}
-                      onSelect={(value) => {
-                        setEditPontoDestino(value);
-                        setEditNavigationPath("");
-                        setEditNavigationSelection(null);
-                        setEditNavigationMode("point");
-                      }}
-                      className="mt-1"
-                    />
-                  </>
-                )}
-
-                {editNavigationMode === "back" && (
-                  <div className="mt-2 text-xs text-neutral-600">
-                    Este hotspot volta para a vista anterior (histórico local).
+                {editStickToGround && (
+                  <div className="rounded border border-black/10 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-neutral-700">Clica no plano para posicionar rapidamente.</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsPickingGroundPosition((prev) => !prev)}
+                        className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                      >
+                        {isPickingGroundPosition ? "Parar colocacao" : "Colocar no plano"}
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {editNavigationMode !== "back" && (!!editPontoDestino || !!editNavigationSelection || !!editNavigationPath) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditPontoDestino("");
-                      setEditNavigationSelection(null);
-                      setEditNavigationPath("");
-                      setEditNavigationMode("file");
-                    }}
-                    className="self-start text-xs text-red-600 hover:underline"
-                  >
-                    Remover destino de navegação
-                  </button>
+                <label className="text-sm font-medium">
+                  {editStickToGround ? "Posição Y (plano):" : "Posição Y:"} {editStickToGround ? (Number(editZ) || 0).toFixed(1) : (Number(editY) || 0).toFixed(1)}
+                </label>
+                <input
+                  type="range"
+                  min={positionSliderMin}
+                  max={positionSliderMax}
+                  step="0.1"
+                  value={editStickToGround ? (Number(editZ) || 0) : (Number(editY) || 0)}
+                  onChange={(e) => {
+                    const next = parseFloat(e.target.value);
+                    if (!Number.isFinite(next)) return;
+                    if (editStickToGround) {
+                      setPositionAndAnglesFromXYZ(editX, floorY, next);
+                      return;
+                    }
+                    setPositionAndAnglesFromXYZ(editX, next, editZ);
+                  }}
+                  className="w-full accent-black"
+                />
+
+                {!editStickToGround && (
+                  <>
+                    <label className="text-sm font-medium">Posição Z: {(Number(editZ) || 0).toFixed(1)}</label>
+                    <input
+                      type="range"
+                      min={positionSliderMin}
+                      max={positionSliderMax}
+                      step="0.1"
+                      value={Number(editZ) || 0}
+                      onChange={(e) => {
+                        const next = parseFloat(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setPositionAndAnglesFromXYZ(editX, editY, next);
+                      }}
+                      className="w-full accent-black"
+                    />
+                  </>
                 )}
-              </>
+              </div>
+            )}
+
+            {/* Step 4: Transform */}
+            {editStep === "transform" && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium mt-2">Rotação horizontal (Yaw): {Math.round(editYaw)}°</label>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  value={editYaw}
+                  onChange={(e) => {
+                    const nextYaw = parseFloat(e.target.value);
+                    if (!Number.isFinite(nextYaw)) return;
+                    setEditYaw(nextYaw);
+                  }}
+                  className="w-full accent-black"
+                />
+
+                <label className="text-sm font-medium">Rotação vertical (Pitch): {Math.round(editPitch)}°</label>
+                <input
+                  type="range"
+                  min="-80"
+                  max="80"
+                  step="1"
+                  value={editPitch}
+                  onChange={(e) => {
+                    const nextPitch = parseFloat(e.target.value);
+                    if (!Number.isFinite(nextPitch)) return;
+                    setEditPitch(nextPitch);
+                  }}
+                  className="w-full accent-black"
+                />
+
+                <label className="text-sm font-medium">Distância ao centro: {Math.round(editRadius)}</label>
+                <input
+                  type="range"
+                  min="100"
+                  max={domeRadius}
+                  step="1"
+                  value={editRadius}
+                  onChange={(e) => {
+                    const nextRadius = parseFloat(e.target.value);
+                    if (!Number.isFinite(nextRadius)) return;
+                    setPositionFromRadius(nextRadius);
+                  }}
+                  className="w-full accent-black"
+                />
+
+                <label className="text-sm font-medium">Escala do hotspot: {(Number(editScale) || 1).toFixed(2)}x</label>
+                <input
+                  type="range"
+                  min="0.4"
+                  max={Math.max(20, Math.ceil(Number(editScale) || 1))}
+                  step="0.05"
+                  value={Number(editScale) || 1}
+                  onChange={(e) => {
+                    const nextScale = parseFloat(e.target.value);
+                    if (!Number.isFinite(nextScale)) return;
+                    setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
+                  }}
+                  className="w-full accent-black"
+                />
+                <input
+                  type="number"
+                  min="0.4"
+                  step="0.05"
+                  value={(Number(editScale) || 1).toFixed(2)}
+                  onChange={(e) => {
+                    const nextScale = parseFloat(e.target.value);
+                    if (!Number.isFinite(nextScale)) return;
+                    setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
+                  }}
+                  className="border rounded px-2 py-1 dark:bg-black"
+                />
+              </div>
+            )}
+
+            {/* Step 5: Styling */}
+            {editStep === "styling" && (
+              <div className="flex flex-col gap-2">
+                <label className="inline-flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={editHideIcon}
+                    onChange={(e) => setEditHideIcon(Boolean(e.target.checked))}
+                    className="accent-black"
+                  />
+                  Ocultar ícone de hotspot para utilizadores
+                </label>
+              </div>
+            )}
+
+            {/* Step 6: Navigation */}
+            {editStep === "navigation" && (
+              <div className="flex flex-col gap-2">
+                {editTipo === "navegacao" ? (
+                  <>
+                    <label className="text-sm font-medium mt-2">Destino de navegação:</label>
+                    <DropdownSingle
+                      label={
+                        editNavigationMode === "back"
+                          ? "Anterior"
+                          : (editNavigationMode === "point" ? "Outro ponto" : "Próxima vista (imagem/vídeo)")
+                      }
+                      selectlabel="Destino"
+                      items={[
+                        { label: "Próxima vista (imagem/vídeo)", value: "file" },
+                        { label: "Outro ponto", value: "point" },
+                        { label: "Anterior", value: "back" },
+                      ]}
+                      onSelect={(value) => {
+                        setEditNavigationMode(value);
+                        if (value === "back") {
+                          setEditPontoDestino("");
+                          setEditNavigationSelection(null);
+                          setEditNavigationPath("");
+                          return;
+                        }
+                        if (value === "point") {
+                          setEditNavigationSelection(null);
+                          setEditNavigationPath("");
+                          return;
+                        }
+                        setEditPontoDestino("");
+                      }}
+                      className="mt-1"
+                    />
+
+                    {editNavigationMode === "file" && (
+                      <>
+                        <label className="text-sm font-medium mt-2">Vista (imagem/vídeo):</label>
+                        <MediaSourceField
+                          label="Ficheiro de navegação"
+                          accept="image/*,video/mp4,.hdr,.exr"
+                          selection={editNavigationSelection}
+                          onChange={(selection) => {
+                            setEditNavigationSelection(selection);
+                            setEditPontoDestino("");
+                            setEditNavigationMode("file");
+                          }}
+                          destinationPath="pontos"
+                          helperText="Escolhe ou envia um ficheiro de imagem ou vídeo para navegar entre vistas dentro deste ponto inicial."
+                        />
+                      </>
+                    )}
+
+                    {editNavigationMode === "point" && (
+                      <>
+                        <label className="text-sm font-medium mt-2">Ponto de destino:</label>
+                        <DropdownSingle
+                          label={destinoLabel}
+                          selectlabel="Pontos disponíveis"
+                          items={pontosDestino}
+                          onSelect={(value) => {
+                            setEditPontoDestino(value);
+                            setEditNavigationPath("");
+                            setEditNavigationSelection(null);
+                            setEditNavigationMode("point");
+                          }}
+                          className="mt-1"
+                        />
+                      </>
+                    )}
+
+                    {editNavigationMode === "back" && (
+                      <div className="mt-2 text-xs text-neutral-600">
+                        Este hotspot volta para a vista anterior (histórico local).
+                      </div>
+                    )}
+
+                    {editNavigationMode !== "back" && (!!editPontoDestino || !!editNavigationSelection || !!editNavigationPath) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPontoDestino("");
+                          setEditNavigationSelection(null);
+                          setEditNavigationPath("");
+                          setEditNavigationMode("file");
+                        }}
+                        className="self-start text-xs text-red-600 hover:underline"
+                      >
+                        Remover destino de navegação
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-xs text-neutral-600">
+                    Navegação apenas disponível para hotspots do tipo "Navegação".
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

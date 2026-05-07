@@ -2,14 +2,14 @@ const Hotspot = require('../models/hotspot');
 const logger = require('../models/logger');
 
 exports.createHotspot = async (req, res) => {
-  const { id_ponto, x, y, z } = req.body;
+  const { id_ponto, x, y, z, hide_icon } = req.body;
 
   if (!id_ponto || x == null || y == null || z == null) {
     return res.status(400).json({ error: 'Dados incompletos para criar hotspot.' });
   }
 
   try {
-    const novoHotspot = await Hotspot.create({ id_ponto, x, y, z });
+    const novoHotspot = await Hotspot.create({ id_ponto, x, y, z, hide_icon: Boolean(hide_icon) });
 
     const logMessage = `Hotspot criado para ponto ID ${id_ponto} nas coordenadas (${x}, ${y}, ${z})`;
     logger.info(logMessage);
@@ -20,7 +20,11 @@ exports.createHotspot = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao criar hotspot:', error);
-    return res.status(500).json({ error: 'Erro interno ao criar hotspot' });
+    const errorMessage = error?.message || 'Erro interno ao criar hotspot';
+    return res.status(500).json({ 
+      error: errorMessage,
+      details: error?.original?.message || null
+    });
   }
 };
 
@@ -36,7 +40,7 @@ exports.getHotspots = async (req, res) => {
 
 exports.updateHotspot = async (req, res) => {
   const { id } = req.params;
-  const { tipo, conteudo, x, y, z } = req.body;
+  const { tipo, conteudo, x, y, z, icon_type, icon_color, hide_icon } = req.body;
 
   if (!tipo || typeof tipo !== "string") {
     return res.status(400).json({
@@ -77,9 +81,18 @@ exports.updateHotspot = async (req, res) => {
       hotspot.y = Number(y);
       hotspot.z = Number(z);
     }
+    if (icon_type) {
+      hotspot.icon_type = icon_type;
+    }
+    if (icon_color) {
+      hotspot.icon_color = icon_color;
+    }
+    if (typeof hide_icon !== 'undefined') {
+      hotspot.hide_icon = Boolean(hide_icon);
+    }
     await hotspot.save();
 
-    const logMessage = `Hotspot ID ${id} atualizado. Tipo: ${tipo}, Conteúdo: ${conteudo}, Posição: (${hotspot.x}, ${hotspot.y}, ${hotspot.z})`;
+    const logMessage = `Hotspot ID ${id} atualizado. Tipo: ${tipo}, Conteúdo: ${conteudo}, Posição: (${hotspot.x}, ${hotspot.y}, ${hotspot.z}), Ícone: ${icon_type}`;
     logger.info(logMessage);
 
     return res.status(200).json({
@@ -119,6 +132,76 @@ exports.deleteHotspot = async (req, res) => {
     console.error("❌ Erro ao eliminar hotspot:", error);
     return res.status(500).json({
       error: "Erro interno ao eliminar hotspot.",
+      details: error.message,
+    });
+  }
+};
+
+exports.getHotspotIconConfig = async (req, res) => {
+  const { id_ponto } = req.params;
+
+  if (!id_ponto) {
+    return res.status(400).json({ error: "ID do ponto não fornecido." });
+  }
+
+  try {
+    const hotspots = await Hotspot.findAll({
+      where: { id_ponto },
+      attributes: ['id_hotspot', 'icon_type', 'icon_color', 'hide_icon'],
+    });
+
+    return res.status(200).json({
+      message: "Configurações de ícones obtidas com sucesso.",
+      data: hotspots,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao obter configurações de ícones:", error);
+    return res.status(500).json({
+      error: "Erro interno ao obter configurações de ícones.",
+      details: error.message,
+    });
+  }
+};
+
+exports.updateHotspotIconConfig = async (req, res) => {
+  const { id_ponto } = req.params;
+  const { icon_type, icon_color, hide_icon } = req.body;
+
+  if (!id_ponto) {
+    return res.status(400).json({ error: "ID do ponto não fornecido." });
+  }
+
+  if (!icon_type) {
+    return res.status(400).json({ error: "Tipo de ícone não fornecido." });
+  }
+
+  try {
+    const hotspots = await Hotspot.findAll({
+      where: { id_ponto },
+    });
+
+    for (const hotspot of hotspots) {
+      hotspot.icon_type = icon_type;
+      if (icon_color) {
+        hotspot.icon_color = icon_color;
+      }
+      if (typeof hide_icon !== 'undefined') {
+        hotspot.hide_icon = Boolean(hide_icon);
+      }
+      await hotspot.save();
+    }
+
+    const logMessage = `Configurações de ícones atualizadas para todos os hotspots do ponto ID ${id_ponto}. Tipo: ${icon_type}, Cor: ${icon_color}`;
+    logger.info(logMessage);
+
+    return res.status(200).json({
+      message: "Configurações de ícones atualizadas com sucesso.",
+      data: hotspots,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao atualizar configurações de ícones:", error);
+    return res.status(500).json({
+      error: "Erro interno ao atualizar configurações de ícones.",
       details: error.message,
     });
   }
