@@ -5,7 +5,11 @@ const path = require('path');
 const fs = require('fs');
 const logger = require('../models/logger');
 const { getPublicUploadUrl, normalizeUploadsRelativePath } = require('../utils/mediaLibrary');
-const { getDefaultThemePreset } = require('../services/themePresetDefaults');
+const {
+    DEFAULT_THEME_SYSTEM_KEY,
+    getDefaultThemePresetObject,
+    getStarterThemePresets,
+} = require('../services/themePresetDefaults');
 
 /* ── multer: logos go to uploads/logos ── */
 const logosDir = path.join(__dirname, '..', '..', 'uploads', 'logos');
@@ -93,10 +97,30 @@ const faviconUrl = (relativePath, req) => {
 exports.listPresets = async (req, res) => {
     try {
         const presets = await ThemePreset.findAll({ order: [['createdAt', 'DESC']] });
-        return res.json({ success: true, data: presets.map((preset) => serializePreset(preset, req)) });
+        const visiblePresets = presets.filter((preset) => !preset.systemKey || preset.systemKey === DEFAULT_THEME_SYSTEM_KEY);
+        const serialized = visiblePresets.map((preset) => serializePreset(preset, req));
+        const hasDefaultPreset = serialized.some((preset) => preset?.systemKey === DEFAULT_THEME_SYSTEM_KEY);
+
+        if (!hasDefaultPreset) {
+            const fallbackDefault = getDefaultThemePresetObject();
+            if (fallbackDefault) serialized.unshift(serializePreset(fallbackDefault, req));
+        }
+
+        return res.json({ success: true, data: serialized });
     } catch (err) {
         console.error('Erro ao listar presets:', err);
         return res.status(500).json({ success: false, message: 'Erro ao listar presets' });
+    }
+};
+
+/* ── LIST starter presets for simple editing ── */
+exports.listStarterPresets = async (req, res) => {
+    try {
+        const presets = getStarterThemePresets();
+        return res.json({ success: true, data: presets.map((preset) => serializePreset(preset, req)) });
+    } catch (err) {
+        console.error('Erro ao listar presets base:', err);
+        return res.status(500).json({ success: false, message: 'Erro ao listar presets base' });
     }
 };
 
@@ -117,7 +141,15 @@ exports.createPreset = (req, res) => {
     upload(req, res, async (err) => {
         if (err) return res.status(400).json({ success: false, message: err.message });
         try {
-            const { name, lightVars, darkVars } = req.body;
+            const {
+                name,
+                lightVars,
+                darkVars,
+                hotspotIconType,
+                hotspotIconColor,
+                hotspotTextFont,
+                hotspotCustomIcons,
+            } = req.body;
             if (!name) return res.status(400).json({ success: false, message: 'Nome é obrigatório' });
 
             const logoLightPath = normalizeUploadsRelativePath(req.body.logoLightPath || '');
@@ -135,15 +167,21 @@ exports.createPreset = (req, res) => {
                 darkVars: darkVars ? JSON.parse(darkVars) : null,
                 logoLightUrl,
                 logoDarkUrl,
+                hotspotIconType: hotspotIconType || "default",
+                hotspotIconColor: hotspotIconColor || "#06b6d4",
+                hotspotTextFont: hotspotTextFont || "roboto",
+                hotspotCustomIcons: hotspotCustomIcons ? JSON.parse(hotspotCustomIcons) : null,
             });
 
             logger.info(`Preset "${name}" criado (id ${preset.id_theme_preset})`);
             return res.status(201).json({ success: true, data: serializePreset(preset, req) });
         } catch (err) {
-            console.error('Erro ao criar preset:', err);
+            console.error('Erro ao criar preset:', err.message);
+            console.error('Stack:', err.stack);
+            console.error('Full error:', err);
             if (err.name === 'SequelizeUniqueConstraintError')
                 return res.status(409).json({ success: false, message: 'Já existe um preset com esse nome' });
-            return res.status(500).json({ success: false, message: 'Erro ao criar preset' });
+            return res.status(500).json({ success: false, message: `Erro ao criar preset: ${err.message || err}` });
         }
     });
 };
@@ -156,10 +194,22 @@ exports.updatePreset = (req, res) => {
             const preset = await ThemePreset.findByPk(req.params.id);
             if (!preset) return res.status(404).json({ success: false, message: 'Preset não encontrado' });
 
-            const { name, lightVars, darkVars } = req.body;
+            const {
+                name,
+                lightVars,
+                darkVars,
+                hotspotIconType,
+                hotspotIconColor,
+                hotspotTextFont,
+                hotspotCustomIcons,
+            } = req.body;
             if (name !== undefined) preset.name = name;
             if (lightVars !== undefined) preset.lightVars = JSON.parse(lightVars);
             if (darkVars !== undefined) preset.darkVars = JSON.parse(darkVars);
+            if (hotspotIconType !== undefined) preset.hotspotIconType = hotspotIconType;
+            if (hotspotIconColor !== undefined) preset.hotspotIconColor = hotspotIconColor;
+            if (hotspotTextFont !== undefined) preset.hotspotTextFont = hotspotTextFont;
+            if (hotspotCustomIcons !== undefined) preset.hotspotCustomIcons = JSON.parse(hotspotCustomIcons);
 
             const logoLightPath = normalizeUploadsRelativePath(req.body.logoLightPath || '');
             const logoDarkPath = normalizeUploadsRelativePath(req.body.logoDarkPath || '');
@@ -213,12 +263,12 @@ exports.getActiveTheme = async (req, res) => {
     try {
         const setting = await AppSetting.findByPk('active_theme_preset_id');
         if (!setting || !setting.value) {
-            const defaultPreset = await getDefaultThemePreset();
+            const defaultPreset = getDefaultThemePresetObject();
             return res.json({ success: true, data: serializePreset(defaultPreset, req) });
         }
         const preset = await ThemePreset.findByPk(setting.value);
         if (!preset) {
-            const defaultPreset = await getDefaultThemePreset();
+            const defaultPreset = getDefaultThemePresetObject();
             return res.json({ success: true, data: serializePreset(defaultPreset, req) });
         }
         return res.json({ success: true, data: serializePreset(preset, req) });

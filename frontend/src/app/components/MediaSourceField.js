@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { File, Folder, HardDriveUpload, ImageIcon, Music2, RefreshCcw, FolderPlus, Upload, Video } from "lucide-react";
+import { File, Folder, HardDriveUpload, ImageIcon, LayoutGrid, List, Music2, RefreshCcw, FolderPlus, Upload, Video } from "lucide-react";
 import {
   createLibrarySelection,
   fetchMediaDirectory,
@@ -249,6 +249,7 @@ export default function MediaSourceField({
   const [selectedPath, setSelectedPath] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("updated_desc");
+  const [viewMode, setViewMode] = useState("grid");
   const uploadInputRef = useRef(null);
   const inputAccept = useMemo(() => normalizeInputAccept(accept), [accept]);
 
@@ -497,7 +498,7 @@ export default function MediaSourceField({
             </div>
           </DialogHeader>
 
-          <div className="flex-1 min-h-0 overflow-hidden px-5 py-4 space-y-4">
+          <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-5 py-4 gap-4">
             <div
               className="rounded-xl border border-dashed border-border bg-card px-4 py-3 shrink-0"
               onDragOver={(event) => event.preventDefault()}
@@ -565,6 +566,28 @@ export default function MediaSourceField({
                     <option value="size_desc">Maior tamanho</option>
                     <option value="size_asc">Menor tamanho</option>
                   </select>
+                  <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+                    <Button
+                      type="button"
+                      variant={viewMode === "grid" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("grid")}
+                      className="h-8 px-2"
+                      title="Vista em grelha"
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={viewMode === "list" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("list")}
+                      className="h-8 px-2"
+                      title="Vista em lista"
+                    >
+                      <List className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="mb-4 text-xs text-muted-foreground">
@@ -579,7 +602,7 @@ export default function MediaSourceField({
                 ) : visibleItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Sem resultados para a pesquisa atual.</p>
                 ) : (
-                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+                  <div className={viewMode === "grid" ? "grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3" : "flex flex-col gap-2"}>
                     {visibleItems.map((item) => {
                       const accepted = item.type === "folder" || fileMatchesAccept(item.name, accept);
                       const isActive = selectedPath === item.path;
@@ -601,22 +624,42 @@ export default function MediaSourceField({
                             }
                             setSelectedPath(item.path);
                           }}
-                          className={`rounded-xl border p-4 text-left transition ${isActive ? "border-foreground bg-muted" : "border-border hover:border-foreground/40"}`}
+                          className={`rounded-xl border text-left transition ${isActive ? "border-foreground bg-muted" : "border-border hover:border-foreground/40"} ${viewMode === "grid" ? "p-4" : "p-3"}`}
                         >
-                          <div className="mb-4 flex items-start gap-2">
-                            <Icon className="h-5 w-5 shrink-0" />
-                            <span className="truncate text-sm font-semibold text-foreground">{item.name}</span>
-                          </div>
+                          {viewMode === "grid" ? (
+                            <>
+                              <div className="mb-4 flex items-start gap-2">
+                                <Icon className="h-5 w-5 shrink-0" />
+                                <span className="truncate text-sm font-semibold text-foreground">{item.name}</span>
+                              </div>
 
-                          <div className="space-y-1 text-sm text-muted-foreground">
-                            {item.type === "folder" ? (
-                              <div>Pasta</div>
-                            ) : (
-                              <div>Extensão: {getExtensionLabel(item)}</div>
-                            )}
-                            {item.type === "file" && <div>Tamanho: {formatBytes(item.size)}</div>}
-                            <div>Atualizado: {toLabelDate(item.modifiedAt)}</div>
-                          </div>
+                              <div className="space-y-1 text-sm text-muted-foreground">
+                                {item.type === "folder" ? (
+                                  <div>Pasta</div>
+                                ) : (
+                                  <div>Extensão: {getExtensionLabel(item)}</div>
+                                )}
+                                {item.type === "file" && <div>Tamanho: {formatBytes(item.size)}</div>}
+                                <div>Atualizado: {toLabelDate(item.modifiedAt)}</div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <Icon className="h-5 w-5 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-semibold text-foreground">{item.name}</div>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                  {item.type === "folder" ? (
+                                    <span>Pasta</span>
+                                  ) : (
+                                    <span>Extensão: {getExtensionLabel(item)}</span>
+                                  )}
+                                  {item.type === "file" && <span>Tamanho: {formatBytes(item.size)}</span>}
+                                  <span>Atualizado: {toLabelDate(item.modifiedAt)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </button>
                       );
                     })}

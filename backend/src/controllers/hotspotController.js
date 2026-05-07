@@ -1,6 +1,17 @@
 const Hotspot = require('../models/hotspot');
 const logger = require('../models/logger');
 
+const DEFAULT_HOTSPOT_ICON_TYPE = 'default';
+const DEFAULT_HOTSPOT_ICON_COLOR = '#06b6d4';
+
+function normalizeHotspotIconType(iconType) {
+  return String(iconType || '').toLowerCase() === 'custom' ? 'custom' : 'default';
+}
+
+function persistHotspotIconType(iconType) {
+  return normalizeHotspotIconType(iconType) === 'custom' ? 'custom' : 'ring';
+}
+
 exports.createHotspot = async (req, res) => {
   const { id_ponto, x, y, z, hide_icon } = req.body;
 
@@ -9,7 +20,15 @@ exports.createHotspot = async (req, res) => {
   }
 
   try {
-    const novoHotspot = await Hotspot.create({ id_ponto, x, y, z, hide_icon: Boolean(hide_icon) });
+    const novoHotspot = await Hotspot.create({
+      id_ponto,
+      x,
+      y,
+      z,
+      icon_type: persistHotspotIconType(DEFAULT_HOTSPOT_ICON_TYPE),
+      icon_color: DEFAULT_HOTSPOT_ICON_COLOR,
+      hide_icon: Boolean(hide_icon),
+    });
 
     const logMessage = `Hotspot criado para ponto ID ${id_ponto} nas coordenadas (${x}, ${y}, ${z})`;
     logger.info(logMessage);
@@ -82,7 +101,7 @@ exports.updateHotspot = async (req, res) => {
       hotspot.z = Number(z);
     }
     if (icon_type) {
-      hotspot.icon_type = icon_type;
+      hotspot.icon_type = persistHotspotIconType(icon_type);
     }
     if (icon_color) {
       hotspot.icon_color = icon_color;
@@ -181,7 +200,7 @@ exports.updateHotspotIconConfig = async (req, res) => {
     });
 
     for (const hotspot of hotspots) {
-      hotspot.icon_type = icon_type;
+      hotspot.icon_type = persistHotspotIconType(icon_type);
       if (icon_color) {
         hotspot.icon_color = icon_color;
       }

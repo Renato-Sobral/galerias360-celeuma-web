@@ -35,6 +35,25 @@ const ThemePreset = sequelize.define("theme_preset", {
         type: DataTypes.STRING(255),
         allowNull: true,
     },
+    hotspotIconType: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        defaultValue: "default",
+    },
+    hotspotIconColor: {
+        type: DataTypes.STRING(7),
+        allowNull: true,
+        defaultValue: "#06b6d4",
+    },
+    hotspotTextFont: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        defaultValue: "roboto",
+    },
+    hotspotCustomIcons: {
+        type: DataTypes.JSON,
+        allowNull: true,
+    },
     createdByUserId: {
         type: DataTypes.INTEGER,
         allowNull: true,

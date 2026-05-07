@@ -22,7 +22,6 @@ const editorStateRoutes = require('./routes/editorStateRoutes');
 const pontoAlinhamentoRoutes = require('./routes/pontoAlinhamentoRoutes');
 const mobileRoutes = require('./routes/mobileRoutes');
 const { PRIMARY_UPLOADS_ROOT, LEGACY_UPLOADS_ROOT } = require('./utils/mediaLibrary');
-const { seedDefaultThemePresets } = require('./services/themePresetDefaults');
 //const estatistica = require('./models/estatistica');
 
 const PORT = process.env.PORT || 3000;
@@ -54,13 +53,13 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Verificar se a origem está na lista permitida
-    if (allowedOrigins.includes(origin)) {
+    // Em desenvolvimento, facilitar acesso entre hosts locais e túneis.
+    if (isDev) {
       return callback(null, true);
     }
 
-    // Em desenvolvimento, permitir localhost e IPs privados
-    if (isDev && (devLocalOriginRegex.test(origin) || devPrivateOriginRegex.test(origin))) {
+    // Verificar se a origem está na lista permitida
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
@@ -115,8 +114,6 @@ async function bootstrap() {
   const shouldAlterSchema = process.env.SEQUELIZE_SYNC_ALTER === "true";
   await sequelize.sync(shouldAlterSchema ? { alter: true } : undefined);
   console.log(`✅ Tabelas sincronizadas com sucesso! (alter=${shouldAlterSchema})`);
-
-  await seedDefaultThemePresets();
 
   server.listen(PORT, () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);

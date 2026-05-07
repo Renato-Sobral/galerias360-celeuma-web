@@ -12,6 +12,8 @@ import {
   FileAudio,
   FileArchive,
   FileText,
+  LayoutGrid,
+  List,
   Upload,
   FolderPlus,
   Trash2,
@@ -163,6 +165,7 @@ function MediaManager() {
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("updated_desc");
+  const [viewMode, setViewMode] = useState("grid");
   const fileInputRef = useRef(null);
 
   const breadcrumbs = useMemo(() => {
@@ -566,6 +569,24 @@ function MediaManager() {
                     <option value="size_desc">Maior tamanho</option>
                     <option value="size_asc">Menor tamanho</option>
                   </select>
+                  <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("grid")}
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded ${viewMode === "grid" ? "bg-foreground text-background" : "text-foreground hover:bg-muted"}`}
+                      title="Vista em grelha"
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("list")}
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded ${viewMode === "list" ? "bg-foreground text-background" : "text-foreground hover:bg-muted"}`}
+                      title="Vista em lista"
+                    >
+                      <List className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mb-4 text-xs text-muted-foreground">
@@ -580,7 +601,7 @@ function MediaManager() {
                 ) : visibleItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Sem resultados para a pesquisa atual.</p>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+                  <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3" : "flex flex-col gap-2"}>
                     {visibleItems.map((item) => {
                       const Icon = itemIcon(item);
                       const isSelected = selectedItem?.path === item.path;
@@ -623,35 +644,65 @@ function MediaManager() {
                             }}
                             onClick={() => onItemClick(item)}
                             onDoubleClick={() => onItemDoubleClick(item)}
-                            className={`group rounded-xl border p-3 cursor-pointer transition ${isSelected ? "border-foreground bg-muted" : "border-border hover:border-foreground/40"} ${isDropTarget ? "ring-2 ring-foreground/25" : ""}`}
+                            className={`group rounded-xl border cursor-pointer transition ${isSelected ? "border-foreground bg-muted" : "border-border hover:border-foreground/40"} ${isDropTarget ? "ring-2 ring-foreground/25" : ""} ${viewMode === "grid" ? "p-3" : "p-3"}`}
                           >
-                            <div className="mb-3 flex items-start justify-between gap-2">
-                              <div className="inline-flex items-center gap-2 min-w-0">
+                            {viewMode === "grid" ? (
+                              <>
+                                <div className="mb-3 flex items-start justify-between gap-2">
+                                  <div className="inline-flex items-center gap-2 min-w-0">
+                                    <Icon className="h-5 w-5 shrink-0" />
+                                    <span className="truncate text-sm font-medium">{item.name}</span>
+                                  </div>
+
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleDeleteItem(item);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 inline-flex items-center rounded p-1 hover:bg-muted-foreground/10"
+                                    title="Eliminar item"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                  {item.type === "folder" ? (
+                                    <div>Pasta</div>
+                                  ) : (
+                                    <div>Extensão: {getExtensionLabel(item)}</div>
+                                  )}
+                                  {item.type === "file" && <div>Tamanho: {formatBytes(item.size)}</div>}
+                                  <div>Atualizado: {toLabelDate(item.modifiedAt)}</div>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-3">
                                 <Icon className="h-5 w-5 shrink-0" />
-                                <span className="truncate text-sm font-medium">{item.name}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium">{item.name}</div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                    {item.type === "folder" ? (
+                                      <span>Pasta</span>
+                                    ) : (
+                                      <span>Extensão: {getExtensionLabel(item)}</span>
+                                    )}
+                                    {item.type === "file" && <span>Tamanho: {formatBytes(item.size)}</span>}
+                                    <span>Atualizado: {toLabelDate(item.modifiedAt)}</span>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleDeleteItem(item);
+                                  }}
+                                  className="inline-flex items-center rounded p-1 hover:bg-muted-foreground/10"
+                                  title="Eliminar item"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
                               </div>
-
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleDeleteItem(item);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 inline-flex items-center rounded p-1 hover:bg-muted-foreground/10"
-                                title="Eliminar item"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </div>
-
-                            <div className="space-y-1 text-xs text-muted-foreground">
-                              {item.type === "folder" ? (
-                                <div>Pasta</div>
-                              ) : (
-                                <div>Extensão: {getExtensionLabel(item)}</div>
-                              )}
-                              {item.type === "file" && <div>Tamanho: {formatBytes(item.size)}</div>}
-                              <div>Atualizado: {toLabelDate(item.modifiedAt)}</div>
-                            </div>
+                            )}
                           </div>
                         </ContextMenuWrapper>
                       );

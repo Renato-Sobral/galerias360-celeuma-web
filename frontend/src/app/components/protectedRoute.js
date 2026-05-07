@@ -4,12 +4,27 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
-function getApiBase() {
+function getConfiguredApiBase() {
   const configuredBase = process.env.NEXT_PUBLIC_API_URL;
 
   if (typeof configuredBase === "string" && configuredBase.trim()) {
     return configuredBase.replace(/\/$/, "");
   }
+
+  return "";
+}
+
+function getLocalApiBase() {
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:3000`;
+  }
+
+  return "http://localhost:3000";
+}
+
+function getApiBase() {
+  const configured = getConfiguredApiBase();
+  if (configured) return configured;
 
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:3000`;
@@ -49,9 +64,33 @@ const ProtectedRoute = ({ children, rolesRequired }) => {
       }
 
       try {
-        const response = await axios.get(`${getApiBase()}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const base = getApiBase();
+        const localBase = getLocalApiBase();
+
+        let response;
+
+        try {
+          response = await axios.get(`${base}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch (firstError) {
+          const canRetryWithLocal =
+            !!firstError?.isAxiosError &&
+            !firstError?.response &&
+            localBase &&
+            localBase !== base;
+
+          if (!canRetryWithLocal) throw firstError;
+
+          console.warn(
+            `Falha de rede ao contactar ${base}. A tentar fallback local em ${localBase}.`,
+            firstError
+          );
+
+          response = await axios.get(`${localBase}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
 
         console.log("Resposta do /auth/me:", response.data);
 

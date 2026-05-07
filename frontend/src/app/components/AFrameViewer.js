@@ -44,6 +44,23 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const IMAGE4P_PREFIX = "img4p:";
   const INSPECT3D_PREFIX = "insp3d:";
   const HOTSPOT_SCALE_MIN = 0.2;
+  const HOTSPOT_DEFAULT_ICON_PATHS = {
+    audio: "icons/Audio.png",
+    audioespacial: "icons/Audio3D.png",
+    imagem: "icons/Imagem.png",
+    imagem4p: "icons/Imagem4P.png",
+    modelo3d: "icons/Modelo3D.png",
+    modelo3d_inspect: "icons/InspecaoModelo3D.png",
+    link: "icons/Link.png",
+    navegacao: "icons/Navegacao.png",
+    video: "icons/Video.png",
+  };
+  const DEFAULT_HOTSPOT_ICON_CONFIG = {
+    icon_type: "default",
+    icon_color: "#06b6d4",
+    text_font: "roboto",
+    custom_icons: {},
+  };
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
   const DEFAULT_DOME_ROTATION_Y = -130;
   const DEFAULT_DOME_ROTATION_X = 0;
@@ -1867,42 +1884,65 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     );
   };
 
-  const getHotspotIconConfig = () => {
-    try {
-      const stored = localStorage.getItem("hotspot_icon_config");
-      return stored ? JSON.parse(stored) : { icon_type: "ring", icon_color: "#06b6d4", text_font: "roboto", custom_icons: {} };
-    } catch {
-      return { icon_type: "ring", icon_color: "#06b6d4", text_font: "roboto", custom_icons: {} };
-    }
+  const normalizeHotspotIconType = (iconType) => (String(iconType || "").toLowerCase() === "custom" ? "custom" : "default");
+
+  const normalizeStoredHotspotIconType = (iconType) => normalizeHotspotIconType(iconType);
+
+  const getHotspotIconTypeKey = (hotspot) => {
+    const isNavigation = hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back";
+    return isNavigation ? "navegacao" : String(hotspot?.tipo || "");
   };
 
-  const resolveCustomHotspotIconUrl = (iconConfig, hotspot) => {
-    if (!iconConfig || iconConfig.icon_type !== "custom") return "";
+  const resolveHotspotIconPath = (iconConfig, hotspot) => {
+    const typeKey = getHotspotIconTypeKey(hotspot);
+    const iconType = normalizeHotspotIconType(iconConfig?.icon_type);
 
-    const customIcons = iconConfig.custom_icons && typeof iconConfig.custom_icons === "object" ? iconConfig.custom_icons : {};
-    const isNavigation = hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back";
-    const typeKey = isNavigation ? "navegacao" : String(hotspot?.tipo || "");
-    const storedValue = customIcons[typeKey] || customIcons[hotspot?.tipo] || customIcons.link || customIcons.default || "";
+    if (iconType === "custom") {
+      const customIcons = iconConfig?.custom_icons && typeof iconConfig.custom_icons === "object" ? iconConfig.custom_icons : {};
+      return customIcons[typeKey] || customIcons.default || "";
+    }
 
+    return HOTSPOT_DEFAULT_ICON_PATHS[typeKey] || "";
+  };
+
+  const resolveHotspotIconUrl = (iconConfig, hotspot) => {
+    const storedValue = resolveHotspotIconPath(iconConfig, hotspot);
     if (!storedValue) return "";
 
     const normalizedPath = relativePathFromUploadsUrl(storedValue) || String(storedValue).replace(/^\/+/, "");
     return normalizedPath ? resolveUploadsUrl(normalizedPath) || "" : storedValue;
   };
 
-  const renderCustomHotspotIcon = (iconConfig, hotspot) => {
-    const { icon_type = "ring" } = iconConfig || {};
-    const imageUrl = resolveCustomHotspotIconUrl(iconConfig, hotspot);
+  const renderHotspotIcon = (iconConfig, hotspot) => {
+    const imageUrl = resolveHotspotIconUrl(iconConfig, hotspot);
+    if (!imageUrl) return null;
 
-    if (icon_type === "custom" && imageUrl) {
-      return (
-        <a-entity>
-          <a-image src={imageUrl} width="18" height="18" position="0 0 0" material="transparent: true; side: double; alphaTest: 0.050" />
-        </a-entity>
-      );
+    return (
+      <a-entity>
+        <a-image src={imageUrl} width="8" height="8" position="0 0 0" material="transparent: true; side: double; alphaTest: 0.050" />
+      </a-entity>
+    );
+  };
+
+  const getHotspotIconConfig = () => {
+    try {
+      const stored = localStorage.getItem("hotspot_icon_config");
+      if (!stored) return DEFAULT_HOTSPOT_ICON_CONFIG;
+
+      const parsed = JSON.parse(stored);
+      const customIcons = parsed?.custom_icons && typeof parsed.custom_icons === "object" ? parsed.custom_icons : {};
+
+      return {
+        ...DEFAULT_HOTSPOT_ICON_CONFIG,
+        ...parsed,
+        icon_type: normalizeHotspotIconType(parsed?.icon_type),
+        custom_icons: {
+          ...customIcons,
+        },
+      };
+    } catch {
+      return DEFAULT_HOTSPOT_ICON_CONFIG;
     }
-
-    return null;
   };
 
   const tipoToAFrame = {
@@ -1930,8 +1970,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     imagem: (conteudo) => (
       (() => {
-        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "imagem" });
-        if (customIcon) return customIcon;
+        const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), { tipo: "imagem" });
+        if (hotspotIcon) return hotspotIcon;
 
         return (
           <a-entity>
@@ -1949,22 +1989,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     ),
 
     imagem4p: () => (() => {
-      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "imagem4p" });
-      if (customIcon) return customIcon;
-
-      return (
-        <a-entity>
-          <a-ring radius-inner="5" radius-outer="7" color="#0ea5e9" material="side: double; alphaTest: 0.050" />
-          <a-text value="Imagem 4p" color="white" width="80" align="center" position="0 9 0" />
-        </a-entity>
-      );
+      const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), { tipo: "imagem4p" });
+      return hotspotIcon;
     })(),
 
     modelo3d: (conteudo, hotspot) => renderModelo3dHotspot(conteudo, hotspot),
 
     modelo3d_inspect: (conteudo, hotspot) => {
-      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), hotspot);
-      if (customIcon) return customIcon;
+      const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), hotspot);
+      if (hotspotIcon) return hotspotIcon;
 
       const payload = decodeInspect3dValue(conteudo);
       if (!payload) return null;
@@ -1995,13 +2028,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     audio: (conteudo) => (
       (() => {
-        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "audio" });
-        if (customIcon) return customIcon;
+        const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), { tipo: "audio" });
+        if (hotspotIcon) return hotspotIcon;
 
         return (
           <a-entity>
-            <a-ring radius-inner="5" radius-outer="7" color="#a855f7" material="side: double; alphaTest: 0.050" />
-            <a-text value="Audio" color="white" width="60" align="center" position="0 9 0" />
             <a-entity
               sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: false`}
             ></a-entity>
@@ -2012,13 +2043,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     audioespacial: (conteudo) => (
       (() => {
-        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "audioespacial" });
-        if (customIcon) return customIcon;
+        const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), { tipo: "audioespacial" });
+        if (hotspotIcon) return hotspotIcon;
 
         return (
           <a-entity>
-            <a-ring radius-inner="5" radius-outer="7" color="#7c3aed" material="side: double; alphaTest: 0.050" />
-            <a-text value="Audio 3D" color="white" width="80" align="center" position="0 9 0" />
             <a-entity
               sound={`src: url(${conteudo}); autoplay: true; loop: true; positional: true; refDistance: 50; rolloffFactor: 1;`}
             ></a-entity>
@@ -2027,135 +2056,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       })()
     ),
 
-    video: (conteudo) => (
-      (() => {
-        const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), { tipo: "video" });
-        if (customIcon) return customIcon;
+    video: (conteudo) => (() => {
+      const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), { tipo: "video" });
+      if (hotspotIcon) return hotspotIcon;
 
-        return (
-          <a-entity>
-            <a-ring radius-inner="5" radius-outer="7" color="#f59e0b" material="side: double; alphaTest: 0.050" />
-            <a-text value={conteudo ? "Video" : "Video?"} color="white" width="60" align="center" position="0 9 0" />
-          </a-entity>
-        );
-      })()
-    ),
+      return (
+        <a-entity>
+          <a-text value={conteudo ? "Video" : "Video?"} color="white" width="60" align="center" position="0 9 0" />
+        </a-entity>
+      );
+    })(),
 
-    link: (conteudo, hotspot) => {
-      const customIcon = renderCustomHotspotIcon(getHotspotIconConfig(), hotspot);
-      if (customIcon) return customIcon;
-
-      const isNavigation = hotspot?.tipo === "navegacao" || hotspot?.id_ponto_destino || hotspot?.navigation_file_url || hotspot?.navigation_mode === "back";
-
-      if (isNavigation) {
-        const iconConfig = getHotspotIconConfig();
-        const navColor = hotspot?.icon_color || iconConfig.icon_color || "#22c55e";
-
-        if (iconConfig.icon_type === "sphere") {
-          return (
-            <a-entity>
-              <a-sphere position="0 0 0" radius="10" color={navColor} material="opacity: 0.9; transparent: true; alphaTest: 0.050" />
-              <a-text
-                value={hotspot?.navigation_mode === "back" ? "← Voltar" : "→ Próximo"}
-                color="white"
-                width="90"
-                align="center"
-                position="0 16 0"
-              />
-            </a-entity>
-          );
-        } else if (iconConfig.icon_type === "arrow") {
-          return (
-            <a-entity>
-              <a-triangle
-                vertex-a="-6 8 0"
-                vertex-b="6 8 0"
-                vertex-c="0 -8 0"
-                color={navColor}
-                material="side: double; alphaTest: 0.050"
-              />
-              <a-text
-                value={hotspot?.navigation_mode === "back" ? "Anterior" : "Próxima"}
-                color="white"
-                width="90"
-                align="center"
-                position="0 16 0"
-              />
-            </a-entity>
-          );
-        } else if (iconConfig.icon_type === "custom") {
-          return (
-            <a-entity>
-              <a-box position="0 0 0" width="12" height="12" depth="12" color={navColor} material="opacity: 0.8; transparent: true; alphaTest: 0.050" />
-              <a-text
-                value={hotspot?.navigation_mode === "back" ? "←" : "→"}
-                color="white"
-                width="90"
-                align="center"
-                position="0 18 0"
-              />
-            </a-entity>
-          );
-        } else {
-          // Default ring
-          return (
-            <a-entity>
-              <a-ring
-                radius-inner="8"
-                radius-outer="12"
-                color={navColor}
-                position="0 0 0"
-                opacity="0.95"
-                material="side: double; alphaTest: 0.050"
-              />
-              <a-circle
-                radius="7"
-                color="#0b1b10"
-                position="0 0 0.02"
-                opacity="0.9"
-                material="side: double; alphaTest: 0.050"
-              />
-              {hotspot?.navigation_mode === "back" ? (
-                <a-triangle
-                  vertex-a="2.5 4 0.05"
-                  vertex-b="2.5 -4 0.05"
-                  vertex-c="-4 0 0.05"
-                  color={navColor}
-                  material="side: double; alphaTest: 0.050"
-                />
-              ) : (
-                <a-triangle
-                  vertex-a="-2.5 4 0.05"
-                  vertex-b="-2.5 -4 0.05"
-                  vertex-c="4 0 0.05"
-                  color={navColor}
-                  material="side: double; alphaTest: 0.050"
-                />
-              )}
-              <a-text
-                value={hotspot?.navigation_mode === "back" ? "Anterior" : "Proxima vista"}
-                color="white"
-                width="90"
-                align="center"
-                position="0 16 0"
-              />
-            </a-entity>
-          );
-        }
-      } else {
-        return (
-          <>
-            <a-sphere position="0 0 0" radius="16" color="#ff2e63" />
-            <a-link
-              href={conteudo}
-              title={conteudo}
-              position="0 0 0.5"
-              scale="16 16 1"
-            />
-          </>
-        );
-      }
-    },
+    link: (conteudo, hotspot) => renderHotspotIcon(getHotspotIconConfig(), hotspot),
   };
 
   const contextMenuOptions = selectedHotspot
@@ -2198,7 +2110,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             id_ponto_destino: navigation.pointId,
             navigation_file_path: navigation.filePath,
             navigation_file_url: navigation.filePath ? resolveUploadsUrl(navigation.filePath) : "",
-            icon_type: h.icon_type,
+            icon_type: normalizeStoredHotspotIconType(h.icon_type),
             icon_color: h.icon_color,
             hide_icon: Boolean(h.hide_icon),
           };
@@ -2688,7 +2600,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           id_ponto_destino: "",
           navigation_file_path: "",
           navigation_file_url: "",
-          icon_type: hotspotCriado.icon_type || "ring",
+          icon_type: normalizeStoredHotspotIconType(hotspotCriado.icon_type || "default"),
           icon_color: hotspotCriado.icon_color || "#06b6d4",
           hide_icon: Boolean(hotspotCriado.hide_icon),
         };
@@ -3082,7 +2994,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         id_ponto_destino: finalPontoDestino,
         navigation_file_path: finalNavigationPath,
         navigation_file_url: finalNavigationPath ? resolveUploadsUrl(finalNavigationPath) : "",
-        icon_type: selectedHotspot.icon_type || "ring",
+        icon_type: normalizeStoredHotspotIconType(selectedHotspot.icon_type || "default"),
         icon_color: selectedHotspot.icon_color || "#06b6d4",
         hide_icon: Boolean(editHideIcon),
       };
@@ -4079,7 +3991,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                         setEditImage4pPreviewUrl("");
                       }}
                       destinationPath="media"
-                      helperText="Escolhe ou envia a imagem que queres projetar no outdoor/mupi."
                     />
 
                     <div className="rounded border border-black/10 p-2">

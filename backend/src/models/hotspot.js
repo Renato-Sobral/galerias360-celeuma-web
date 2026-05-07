@@ -38,7 +38,7 @@ const Hotspot = sequelize.define('hotspots', {
     allowNull: false,
   },
   icon_type: {
-    type: DataTypes.ENUM('ring', 'sphere', 'arrow', 'custom'),
+    type: DataTypes.ENUM('ring', 'default', 'custom'),
     allowNull: true,
     defaultValue: 'ring',
   },

@@ -80,8 +80,6 @@ function Pontos({ userRole }) {
       setEditCategorias((categoriasDoPonto || []).map((categoria) => String(categoria.id_categoria)));
       setEditImageSelection(createLibrarySelection(ponto.imagePath));
       setDialogOpen(true);
-    } else if (action === "Hotspots") {
-      router.push(`/admin/pontos/hotspots/${ponto.id_ponto}`);
     } else if (action === "Eliminar") {
       Swal.fire({
         title: `Eliminar "${ponto.name}"`,
@@ -365,7 +363,7 @@ function Pontos({ userRole }) {
   const pontosComAcoes = pontos.map((ponto) => {
     const baseActions = ["Visualizar", "Editar"];
     const isAdmin = userRole === "Admin";
-    const actions = isAdmin ? [...baseActions, "Hotspots", "Eliminar"] : baseActions;
+    const actions = isAdmin ? [...baseActions, "Eliminar"] : baseActions;
     const categoriasPonto = getPontoCategoria(ponto);
     return {
       ...ponto,

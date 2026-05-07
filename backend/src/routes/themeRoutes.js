@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const {
     listPresets,
+    listStarterPresets,
     getPreset,
     createPreset,
     updatePreset,
@@ -18,6 +19,7 @@ const {
 // Public
 router.get('/active', getActiveTheme);
 router.get('/list', listPresets);
+router.get('/starter-list', listStarterPresets);
 router.get('/landing-content', getLandingContent);
 router.get('/favicon', getFavicon);
 router.get('/:id', getPreset);

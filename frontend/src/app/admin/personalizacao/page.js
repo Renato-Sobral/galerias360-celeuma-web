@@ -38,6 +38,7 @@ import {
 import {
     createLibrarySelection,
     relativePathFromUploadsUrl,
+    resolveUploadsUrl,
     resolveMediaSelection,
 } from "../../lib/media-library";
 
@@ -116,6 +117,36 @@ const HOTSPOT_ICON_CUSTOM_IMAGE_TYPES = [
     { key: "link", label: "Link" },
     { key: "navegacao", label: "Navegação" },
 ];
+
+const HOTSPOT_DEFAULT_ICON_PATHS = {
+    audio: "icons/Audio.png",
+    audioespacial: "icons/Audio3D.png",
+    imagem: "icons/Imagem.png",
+    imagem4p: "icons/Imagem4P.png",
+    modelo3d: "icons/Modelo3D.png",
+    modelo3d_inspect: "icons/InspecaoModelo3D.png",
+    link: "icons/Link.png",
+    navegacao: "icons/Navegacao.png",
+    video: "icons/Video.png",
+};
+
+const DEFAULT_HOTSPOT_ICON_CONFIG = {
+    icon_type: "default",
+    icon_color: "#06b6d4",
+    text_font: "roboto",
+};
+
+function normalizeHotspotIconType(iconType) {
+    return String(iconType || "").toLowerCase() === "custom" ? "custom" : "default";
+}
+
+function getHotspotIconPreviewUrl(iconType, key, selection) {
+    if (normalizeHotspotIconType(iconType) === "custom") {
+        return selection?.url || null;
+    }
+
+    return resolveUploadsUrl(HOTSPOT_DEFAULT_ICON_PATHS[key] || "");
+}
 
 const HOTSPOT_TEXT_FONTS = [
     { value: "roboto", label: "Roboto" },
@@ -433,12 +464,16 @@ function SimpleSchemeCard({ scheme, isActive, onApply }) {
 export default function PersonalizacaoPage() {
     const { presets, activePreset, refreshPresets, refreshActive, refreshFavicon } = useThemePresets();
     const orderedPresets = [...presets].sort(sortThemePresets);
-    const starterPresets = orderedPresets.filter((preset) => !!preset.systemKey);
+    const [starterPresets, setStarterPresets] = useState([]);
+    const simpleEditorPresets = starterPresets.length > 0
+        ? starterPresets
+        : orderedPresets.filter((preset) => !!preset.systemKey);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingPreset, setEditingPreset] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [saving, setSaving] = useState(false);
     const [settingActive, setSettingActive] = useState(false);
+    const [themeStep, setThemeStep] = useState("name"); // "name" | "hotspots" | "colors"
     const [landingTitle, setLandingTitle] = useState("Explora o mundo com Galerias 360");
     const [landingDescription, setLandingDescription] = useState("Descobre pontos turísticos e culturais em realidade aumentada com uma experiência imersiva em 360º. Acede ao mapa interativo e mergulha em cada história.");
     const [savingLandingText, setSavingLandingText] = useState(false);
@@ -447,10 +482,10 @@ export default function PersonalizacaoPage() {
     const [savingFavicon, setSavingFavicon] = useState(false);
 
     // Hotspot icon customization state
-    const [hotspotIconType, setHotspotIconType] = useState("ring");
-    const [hotspotIconColor, setHotspotIconColor] = useState("#06b6d4");
+    const [hotspotIconType, setHotspotIconType] = useState(DEFAULT_HOTSPOT_ICON_CONFIG.icon_type);
+    const [hotspotIconColor, setHotspotIconColor] = useState(DEFAULT_HOTSPOT_ICON_CONFIG.icon_color);
     const [hotspotCustomIconSelections, setHotspotCustomIconSelections] = useState({});
-    const [hotspotTextFont, setHotspotTextFont] = useState("roboto");
+    const [hotspotTextFont, setHotspotTextFont] = useState(DEFAULT_HOTSPOT_ICON_CONFIG.text_font);
     const [savingHotspotIcon, setSavingHotspotIcon] = useState(false);
 
     // Form state
@@ -469,6 +504,28 @@ export default function PersonalizacaoPage() {
         refreshPresets();
         refreshActive();
     }, [refreshPresets, refreshActive]);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const loadStarterPresets = async () => {
+            try {
+                const res = await fetch(`${API}/theme/starter-list`, { cache: "no-store" });
+                if (!res.ok) return;
+                const json = await res.json();
+                if (!mounted || !json?.success || !Array.isArray(json.data)) return;
+                setStarterPresets(json.data);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+        loadStarterPresets();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
     useEffect(() => {
         if (!logoLightSelection) {
@@ -539,8 +596,8 @@ export default function PersonalizacaoPage() {
             if (!stored) return;
 
             const parsed = JSON.parse(stored);
-            if (parsed?.icon_type) setHotspotIconType(parsed.icon_type);
-            if (parsed?.icon_color) setHotspotIconColor(parsed.icon_color);
+            setHotspotIconType(normalizeHotspotIconType(parsed?.icon_type));
+            setHotspotIconColor(parsed?.icon_color || DEFAULT_HOTSPOT_ICON_CONFIG.icon_color);
 
             const customIcons = parsed?.custom_icons && typeof parsed.custom_icons === "object" ? parsed.custom_icons : {};
             const nextSelections = HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.reduce((acc, { key }) => {
@@ -549,7 +606,7 @@ export default function PersonalizacaoPage() {
             }, {});
 
             setHotspotCustomIconSelections(nextSelections);
-            if (parsed?.text_font) setHotspotTextFont(parsed.text_font);
+            setHotspotTextFont(parsed?.text_font || DEFAULT_HOTSPOT_ICON_CONFIG.text_font);
         } catch (err) {
             console.error(err);
         }
@@ -661,37 +718,6 @@ export default function PersonalizacaoPage() {
         }
     };
 
-    const handleSaveHotspotIcon = async () => {
-        setSavingHotspotIcon(true);
-        try {
-            const resolvedCustomIcons = {};
-
-            for (const { key } of HOTSPOT_ICON_CUSTOM_IMAGE_TYPES) {
-                const selection = hotspotCustomIconSelections[key];
-                if (!selection) continue;
-
-                const resolvedAsset = await resolveMediaSelection(selection, "media");
-                const storedPath = resolvedAsset?.path || selection.path || "";
-                if (storedPath) {
-                    resolvedCustomIcons[key] = storedPath;
-                }
-            }
-
-            localStorage.setItem("hotspot_icon_config", JSON.stringify({
-                icon_type: hotspotIconType,
-                icon_color: hotspotIconColor,
-                text_font: hotspotTextFont,
-                custom_icons: resolvedCustomIcons,
-            }));
-            alert("Configuração de ícones dos hotspots guardada com sucesso!");
-        } catch (err) {
-            console.error(err);
-            alert(err.message || "Erro ao atualizar configuração de ícones");
-        } finally {
-            setSavingHotspotIcon(false);
-        }
-    };
-
     /* open dialog for create */
     const openCreate = () => {
         setEditingPreset(null);
@@ -703,8 +729,13 @@ export default function PersonalizacaoPage() {
         setLogoLightPreview(null);
         setLogoDarkPreview(null);
         setInvertLogoDark(false);
+        setHotspotIconType(DEFAULT_HOTSPOT_ICON_CONFIG.icon_type);
+        setHotspotIconColor(DEFAULT_HOTSPOT_ICON_CONFIG.icon_color);
+        setHotspotTextFont(DEFAULT_HOTSPOT_ICON_CONFIG.text_font);
+        setHotspotCustomIconSelections({});
         setEditMode("light");
         setEditorVariant("simple");
+        setThemeStep("name");
         setDialogOpen(true);
     };
 
@@ -719,8 +750,22 @@ export default function PersonalizacaoPage() {
         setLogoLightPreview(resolveLogoUrl(preset.logoLightUrl) || null);
         setLogoDarkPreview(resolveLogoUrl(preset.logoDarkUrl) || null);
         setInvertLogoDark(!!preset?.darkVars?.invertLogoDark);
+
+        // Load hotspot icon config from preset
+        setHotspotIconType(normalizeHotspotIconType(preset?.hotspotIconType) || DEFAULT_HOTSPOT_ICON_CONFIG.icon_type);
+        setHotspotIconColor(preset?.hotspotIconColor || DEFAULT_HOTSPOT_ICON_CONFIG.icon_color);
+        setHotspotTextFont(preset?.hotspotTextFont || DEFAULT_HOTSPOT_ICON_CONFIG.text_font);
+
+        const customIcons = preset?.hotspotCustomIcons && typeof preset.hotspotCustomIcons === "object" ? preset.hotspotCustomIcons : {};
+        const nextSelections = HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.reduce((acc, { key }) => {
+            acc[key] = selectionFromStoredValue(customIcons[key]);
+            return acc;
+        }, {});
+        setHotspotCustomIconSelections(nextSelections);
+
         setEditMode("light");
         setEditorVariant("simple");
+        setThemeStep("name");
         setDialogOpen(true);
     };
 
@@ -733,9 +778,27 @@ export default function PersonalizacaoPage() {
     /* save (create or update) */
     const handleSave = async () => {
         if (!name.trim()) return;
+        if (editingPreset && isDefaultThemePreset(editingPreset)) {
+            alert('Preset padrão do sistema não pode ser editado');
+            setDialogOpen(false);
+            return;
+        }
         setSaving(true);
         try {
             const darkVarsPayload = { ...darkVars, invertLogoDark };
+
+            // Resolve hotspot custom icons
+            const resolvedCustomIcons = {};
+            for (const { key } of HOTSPOT_ICON_CUSTOM_IMAGE_TYPES) {
+                const selection = hotspotCustomIconSelections[key];
+                if (!selection) continue;
+                const resolvedAsset = await resolveMediaSelection(selection, "media");
+                const storedPath = resolvedAsset?.path || selection.path || "";
+                if (storedPath) {
+                    resolvedCustomIcons[key] = storedPath;
+                }
+            }
+
             const [logoLightAsset, logoDarkAsset] = await Promise.all([
                 resolveMediaSelection(logoLightSelection, "logos"),
                 resolveMediaSelection(logoDarkSelection, "logos"),
@@ -746,6 +809,10 @@ export default function PersonalizacaoPage() {
             fd.append("darkVars", JSON.stringify(darkVarsPayload));
             fd.append("logoLightPath", logoLightAsset?.path || "");
             fd.append("logoDarkPath", logoDarkAsset?.path || "");
+            fd.append("hotspotIconType", normalizeHotspotIconType(hotspotIconType));
+            fd.append("hotspotIconColor", hotspotIconColor);
+            fd.append("hotspotTextFont", hotspotTextFont);
+            fd.append("hotspotCustomIcons", JSON.stringify(resolvedCustomIcons));
 
             const url = editingPreset
                 ? `${API}/theme/update/${editingPreset.id_theme_preset}`
@@ -816,6 +883,17 @@ export default function PersonalizacaoPage() {
                 },
                 body: JSON.stringify({ presetId: preset?.id_theme_preset ?? null }),
             });
+
+            // Sync hotspot icon config to localStorage if theme has it
+            if (preset) {
+                localStorage.setItem("hotspot_icon_config", JSON.stringify({
+                    icon_type: normalizeHotspotIconType(preset?.hotspotIconType) || DEFAULT_HOTSPOT_ICON_CONFIG.icon_type,
+                    icon_color: preset?.hotspotIconColor || DEFAULT_HOTSPOT_ICON_CONFIG.icon_color,
+                    text_font: preset?.hotspotTextFont || DEFAULT_HOTSPOT_ICON_CONFIG.text_font,
+                    custom_icons: preset?.hotspotCustomIcons || {},
+                }));
+            }
+
             await refreshPresets();
             await refreshActive();
         } catch (err) {
@@ -939,339 +1017,302 @@ export default function PersonalizacaoPage() {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle className="text-lg">Ícones dos Hotspots</CardTitle>
+                        <CardTitle className="text-lg">Temas Guardados</CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div>
-                            <label className="text-sm font-medium">Tipo de Ícone</label>
-                            <select
-                                value={hotspotIconType}
-                                onChange={(e) => setHotspotIconType(e.target.value)}
-                                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                            >
-                                <option value="ring">Ring (Anel)</option>
-                                <option value="sphere">Sphere (Esfera)</option>
-                                <option value="arrow">Arrow (Seta)</option>
-                                <option value="custom">Custom (Personalizado)</option>
-                            </select>
-                            <p className="text-xs text-muted-foreground mt-2">
-                                Seleciona o tipo de ícone a usar nos hotspots da galeria 360.
-                            </p>
-                        </div>
-
-                        <div>
-                            <label className="text-sm font-medium">Cor do Ícone</label>
-                            <div className="flex items-center gap-2 mt-1">
-                                <input
-                                    type="color"
-                                    value={hotspotIconColor}
-                                    onChange={(e) => setHotspotIconColor(e.target.value)}
-                                    className="h-10 w-20 rounded-md border border-border cursor-pointer"
-                                />
-                                <input
-                                    type="text"
-                                    value={hotspotIconColor}
-                                    onChange={(e) => setHotspotIconColor(e.target.value)}
-                                    className="flex-1 text-sm bg-muted rounded-md px-3 py-2 border border-border"
-                                    placeholder="#06b6d4"
-                                />
+                    <CardContent>
+                        {orderedPresets.length === 0 ? (
+                            <div className="py-12 text-center text-muted-foreground">
+                                Ainda não criou nenhum preset de tema. Clique em &quot;Novo Tema&quot; para começar.
                             </div>
-                        </div>
-
-                        {hotspotIconType === "custom" && (
-                            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-4">
-                                <div>
-                                    <p className="text-sm font-medium">Fonte do texto</p>
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                        O hotspot do tipo texto usa esta fonte em vez de um ícone.
-                                    </p>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-sm font-medium">Fonte para texto</label>
-                                    <select
-                                        value={hotspotTextFont}
-                                        onChange={(e) => setHotspotTextFont(e.target.value)}
-                                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                                    >
-                                        {HOTSPOT_TEXT_FONTS.map((font) => (
-                                            <option key={font.value} value={font.value}>{font.label}</option>
-                                        ))}
-                                    </select>
-                                    <div className="rounded-md border border-border bg-background px-3 py-3">
-                                        <span
-                                            className="text-base"
-                                            style={{
-                                                fontFamily: getHotspotTextPreviewFont(hotspotTextFont),
-                                                fontWeight: 600,
-                                            }}
-                                        >
-                                            Amostra de texto 360
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {hotspotIconType === "custom" && (
-                            <div className="space-y-3 rounded-md border border-border bg-muted/10 p-4">
-                                <div>
-                                    <p className="text-sm font-medium">Imagens por tipo de hotspot</p>
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                        Define uma imagem para cada tipo. Quando o modo custom estiver ativo, o viewer vai usar a imagem correspondente ao tipo do hotspot.
-                                    </p>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.map(({ key, label }) => (
-                                        <div key={key} className="rounded-md border border-border bg-background p-3 space-y-3">
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div>
-                                                    <p className="text-sm font-medium">{label}</p>
-                                                    <p className="text-xs text-muted-foreground">Imagem usada para este tipo de hotspot.</p>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                {orderedPresets.map((p) => {
+                                    const isActive = activePreset?.id_theme_preset === p.id_theme_preset;
+                                    return (
+                                        <Card key={p.id_theme_preset} className={`relative overflow-hidden transition-shadow ${isActive ? "ring-2 ring-primary" : ""}`}>
+                                            <CardHeader className="pb-2">
+                                                <div className="flex items-center justify-between">
+                                                    <CardTitle className="text-base truncate">{p.name}</CardTitle>
+                                                    {isActive && <Badge variant="secondary"><Star className="w-3 h-3 mr-1" /> Ativo</Badge>}
                                                 </div>
-                                                {hotspotCustomIconSelections[key] && (
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        className="h-8 px-2 text-xs"
-                                                        onClick={() => {
-                                                            setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: null }));
-                                                        }}
-                                                    >
-                                                        Limpar
-                                                    </Button>
-                                                )}
-                                            </div>
+                                            </CardHeader>
+                                            <CardContent className="space-y-3">
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <MiniPreview vars={{ ...DEFAULT_LIGHT, ...(p.lightVars || {}) }} label="Claro" />
+                                                    <MiniPreview vars={{ ...DEFAULT_DARK, ...(p.darkVars || {}) }} label="Escuro" />
+                                                </div>
 
-                                            <MediaSourceField
-                                                label={`Ícone ${label}`}
-                                                accept="image/png,image/jpeg,image/svg+xml,image/webp,.png,.jpg,.jpeg,.svg,.webp"
-                                                selection={hotspotCustomIconSelections[key] || null}
-                                                onChange={(selection) => {
-                                                    setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: selection }));
-                                                }}
-                                                destinationPath="media"
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
+                                                {/* Logos thumbnails */}
+                                                {(p.logoLightUrl || p.logoDarkUrl) && (
+                                                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                                        {p.logoLightUrl && <img src={resolveLogoUrl(p.logoLightUrl)} alt="Logo claro" className="h-6 max-w-[80px] object-contain rounded" />}
+                                                        {p.logoDarkUrl && <img src={resolveLogoUrl(p.logoDarkUrl)} alt="Logo escuro" className="h-6 max-w-[80px] object-contain rounded bg-zinc-800 px-1" />}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex gap-2 pt-1">
+                                                    {!isActive && (
+                                                        <Button size="sm" variant="outline" onClick={() => handleSetActive(isDefaultThemePreset(p) ? null : p)} disabled={settingActive}>
+                                                            <Check className="w-4 h-4 mr-1" /> Ativar
+                                                        </Button>
+                                                    )}
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => openEdit(p)}
+                                                        disabled={isDefaultThemePreset(p)}
+                                                        title={isDefaultThemePreset(p) ? "Preset padrão do sistema não pode ser editado" : undefined}
+                                                    >
+                                                        <Pencil className="w-4 h-4 mr-1" /> Editar
+                                                    </Button>
+                                                    <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(p)}>
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    );
+                                })}
                             </div>
                         )}
-
-                        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-3">
-                            <div>
-                                <p className="text-sm font-medium">Pré-visualização</p>
-                                <div className="mt-2 flex gap-4">
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="w-24 h-24 rounded-md border border-border bg-black flex items-center justify-center relative">
-                                            {hotspotIconType === "ring" && (
-                                                <div 
-                                                    className="rounded-full border-2" 
-                                                    style={{
-                                                        width: "16px",
-                                                        height: "16px",
-                                                        borderColor: hotspotIconColor,
-                                                    }}
-                                                />
-                                            )}
-                                            {hotspotIconType === "sphere" && (
-                                                <div 
-                                                    className="rounded-full" 
-                                                    style={{
-                                                        width: "20px",
-                                                        height: "20px",
-                                                        backgroundColor: hotspotIconColor,
-                                                        opacity: 0.8,
-                                                    }}
-                                                />
-                                            )}
-                                            {hotspotIconType === "arrow" && (
-                                                <div 
-                                                    style={{
-                                                        width: 0,
-                                                        height: 0,
-                                                        borderLeft: "8px solid transparent",
-                                                        borderRight: "8px solid transparent",
-                                                        borderBottom: `16px solid ${hotspotIconColor}`,
-                                                    }}
-                                                />
-                                            )}
-                                            {hotspotIconType === "custom" && (
-                                                <span className="text-2xl">◉</span>
-                                            )}
-                                        </div>
-                                        <span className="text-xs text-muted-foreground">Pré-visualização</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end">
-                            <Button onClick={handleSaveHotspotIcon} disabled={savingHotspotIcon}>
-                                {savingHotspotIcon ? "A guardar..." : "Guardar Ícone"}
-                            </Button>
-                        </div>
                     </CardContent>
                 </Card>
 
-                {orderedPresets.length === 0 ? (
-                    <Card>
-                        <CardContent className="py-12 text-center text-muted-foreground">
-                            Ainda não criou nenhum preset de tema. Clique em &quot;Novo Tema&quot; para começar.
-                        </CardContent>
-                    </Card>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {orderedPresets.map((p) => {
-                            const isActive = activePreset?.id_theme_preset === p.id_theme_preset;
-                            return (
-                                <Card key={p.id_theme_preset} className={`relative overflow-hidden transition-shadow ${isActive ? "ring-2 ring-primary" : ""}`}>
-                                    <CardHeader className="pb-2">
-                                        <div className="flex items-center justify-between">
-                                            <CardTitle className="text-base truncate">{p.name}</CardTitle>
-                                            {isActive && <Badge variant="secondary"><Star className="w-3 h-3 mr-1" /> Ativo</Badge>}
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent className="space-y-3">
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <MiniPreview vars={{ ...DEFAULT_LIGHT, ...(p.lightVars || {}) }} label="Claro" />
-                                            <MiniPreview vars={{ ...DEFAULT_DARK, ...(p.darkVars || {}) }} label="Escuro" />
-                                        </div>
-
-                                        {/* Logos thumbnails */}
-                                        {(p.logoLightUrl || p.logoDarkUrl) && (
-                                            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                                {p.logoLightUrl && <img src={resolveLogoUrl(p.logoLightUrl)} alt="Logo claro" className="h-6 max-w-[80px] object-contain rounded" />}
-                                                {p.logoDarkUrl && <img src={resolveLogoUrl(p.logoDarkUrl)} alt="Logo escuro" className="h-6 max-w-[80px] object-contain rounded bg-zinc-800 px-1" />}
-                                            </div>
-                                        )}
-
-                                        <div className="flex gap-2 pt-1">
-                                            {!isActive && (
-                                                <Button size="sm" variant="outline" onClick={() => handleSetActive(isDefaultThemePreset(p) ? null : p)} disabled={settingActive}>
-                                                    <Check className="w-4 h-4 mr-1" /> Ativar
-                                                </Button>
-                                            )}
-                                            <Button size="sm" variant="outline" onClick={() => openEdit(p)}>
-                                                <Pencil className="w-4 h-4 mr-1" /> Editar
-                                            </Button>
-                                            <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(p)}>
-                                                <Trash2 className="w-4 h-4" />
-                                            </Button>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            );
-                        })}
-                    </div>
-                )}
-
                 {/* ═══ Create / Edit Dialog ═══ */}
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogContent className="max-w-[95vw] w-full lg:max-w-7xl max-h-[95vh] overflow-y-auto p-4 sm:p-5">
+                    <DialogContent className="max-w-[95vw] w-full lg:max-w-6xl max-h-[95vh] overflow-y-auto p-4 sm:p-5">
                         <DialogHeader>
                             <DialogTitle>{editingPreset ? `Editar "${editingPreset.name}"` : "Novo Tema"}</DialogTitle>
                         </DialogHeader>
 
+                        {/* Step Navigation */}
+                        <div className="flex gap-1 mb-3 border-b border-black/10 overflow-x-auto">
+                            {["name", "hotspots", "colors"].map((step) => (
+                                <button
+                                    key={step}
+                                    type="button"
+                                    onClick={() => setThemeStep(step)}
+                                    className={`px-3 py-2 text-xs font-medium whitespace-nowrap rounded-t border-b-2 transition-colors ${themeStep === step
+                                        ? "border-b-black text-black"
+                                        : "border-b-transparent text-neutral-600 hover:text-black"
+                                        }`}
+                                >
+                                    {step === "name" && "Nome & Logos"}
+                                    {step === "hotspots" && "Hotspots"}
+                                    {step === "colors" && "Cores"}
+                                </button>
+                            ))}
+                        </div>
+
                         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4">
                             <div className="space-y-3 min-w-0 h-[620px]">
-                                {/* Name */}
-                                <div>
-                                    <label className="text-sm font-medium">Nome do Tema</label>
-                                    <input
-                                        type="text"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        placeholder="Ex: Azul Corporativo"
-                                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                                    />
-                                </div>
 
-                                {/* Logos */}
-                                <div className="space-y-2">
-                                    <h3 className="text-sm font-medium">Logos por Tema</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                                        <MediaSourceField
-                                            label="Logo (modo claro)"
-                                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                                            selection={logoLightSelection}
-                                            onChange={setLogoLightSelection}
-                                            destinationPath="logos"
-                                        />
-                                        <MediaSourceField
-                                            label="Logo (modo escuro)"
-                                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
-                                            selection={logoDarkSelection}
-                                            onChange={setLogoDarkSelection}
-                                            destinationPath="logos"
-                                        />
-                                    </div>
-                                    <div className="flex items-center justify-between rounded-md border border-border px-3 py-1.5">
+                                {/* STEP 1: Nome & Logos */}
+                                {themeStep === "name" && (
+                                    <div className="space-y-3">
                                         <div>
-                                            <p className="text-sm font-medium">Inverter logo no modo escuro</p>
-                                            <p className="text-xs text-muted-foreground">Aplica filtro invertido ao logo quando o tema estiver em dark mode.</p>
-                                        </div>
-                                        <Switch checked={invertLogoDark} onCheckedChange={setInvertLogoDark} />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                    {/* Editor type */}
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <label className="text-sm font-medium">Tipo de edição</label>
-                                        <div className="inline-flex rounded-md border border-border p-0.5 gap-0.5 bg-muted/40">
-                                            <Button
-                                                size="sm"
-                                                className="h-8 px-3"
-                                                variant={editorVariant === "simple" ? "default" : "ghost"}
-                                                onClick={() => setEditorVariant("simple")}
-                                            >
-                                                Simples
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                className="h-8 px-3"
-                                                variant={editorVariant === "advanced" ? "default" : "ghost"}
-                                                onClick={() => setEditorVariant("advanced")}
-                                            >
-                                                Avançado
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Left 60% content */}
-                                {editorVariant === "simple" ? (
-                                    <div className="rounded-xl border border-border p-2 space-y-1.5 h-[255px] overflow-y-auto pr-1">
-                                        {starterPresets.map((scheme) => (
-                                            <SimpleSchemeCard
-                                                key={scheme.id_theme_preset}
-                                                scheme={scheme}
-                                                isActive={isSchemeSelected(scheme)}
-                                                onApply={() => applySimpleScheme(scheme)}
+                                            <label className="text-sm font-medium">Nome do Tema</label>
+                                            <input
+                                                type="text"
+                                                value={name}
+                                                onChange={(e) => setName(e.target.value)}
+                                                placeholder="Ex: Azul Corporativo"
+                                                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                                             />
-                                        ))}
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <h3 className="text-sm font-medium">Logos por Tema</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                                                <MediaSourceField
+                                                    label="Logo (modo claro)"
+                                                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                                    selection={logoLightSelection}
+                                                    onChange={setLogoLightSelection}
+                                                    destinationPath="logos"
+                                                />
+                                                <MediaSourceField
+                                                    label="Logo (modo escuro)"
+                                                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                                    selection={logoDarkSelection}
+                                                    onChange={setLogoDarkSelection}
+                                                    destinationPath="logos"
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-between rounded-md border border-border px-3 py-1.5">
+                                                <div>
+                                                    <p className="text-sm font-medium">Inverter logo no modo escuro</p>
+                                                    <p className="text-xs text-muted-foreground">Aplica filtro invertido ao logo quando o tema estiver em dark mode.</p>
+                                                </div>
+                                                <Switch checked={invertLogoDark} onCheckedChange={setInvertLogoDark} />
+                                            </div>
+                                        </div>
                                     </div>
-                                ) : (
-                                    <div className="rounded-xl border border-border p-2.5 h-[420px] overflow-y-auto space-y-3">
-                                        {VAR_GROUPS.map((group) => (
-                                            <div key={group.label}>
-                                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                                                    {group.label}
-                                                </h4>
-                                                <div className="space-y-2">
-                                                    {group.keys.map((k) => (
-                                                        <ColorPickerRow
-                                                            key={k}
-                                                            varKey={k}
-                                                            value={currentVars[k] || ""}
-                                                            onChange={(key, val) => handleColorChange(editMode, key, val)}
+                                )}
+
+                                {/* STEP 2: Hotspot Icons */}
+                                {themeStep === "hotspots" && (
+                                    <div className="space-y-3">
+                                        <div className="space-y-2">
+                                            <h3 className="text-sm font-medium">Ícones dos Hotspots</h3>
+                                            <div className="rounded-md border border-border p-3 space-y-3 bg-muted/10">
+                                                <div>
+                                                    <label className="text-sm font-medium">Tipo de Ícone</label>
+                                                    <select
+                                                        value={hotspotIconType}
+                                                        onChange={(e) => setHotspotIconType(e.target.value)}
+                                                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                                    >
+                                                        <option value="default">Default</option>
+                                                        <option value="custom">Custom</option>
+                                                    </select>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        Default usa os ícones do sistema, custom usa uploads personalizados.
+                                                    </p>
+                                                </div>
+
+                                                <div>
+                                                    <label className="text-sm font-medium">Cor do Ícone</label>
+                                                    <div className="flex items-center gap-2 mt-1">
+                                                        <input
+                                                            type="color"
+                                                            value={hotspotIconColor}
+                                                            onChange={(e) => setHotspotIconColor(e.target.value)}
+                                                            className="h-9 w-16 rounded-md border border-border cursor-pointer"
                                                         />
-                                                    ))}
+                                                        <input
+                                                            type="text"
+                                                            value={hotspotIconColor}
+                                                            onChange={(e) => setHotspotIconColor(e.target.value)}
+                                                            className="flex-1 text-sm bg-muted rounded-md px-2 py-1.5 border border-border"
+                                                            placeholder="#06b6d4"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {hotspotIconType === "custom" && (
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm font-medium">Fonte para Texto</label>
+                                                        <select
+                                                            value={hotspotTextFont}
+                                                            onChange={(e) => setHotspotTextFont(e.target.value)}
+                                                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                                        >
+                                                            {HOTSPOT_TEXT_FONTS.map((font) => (
+                                                                <option key={font.value} value={font.value}>{font.label}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+
+                                                {hotspotIconType === "custom" && (
+                                                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                                                        <p className="text-sm font-medium">Ícones Customizados</p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            Define uma imagem para cada tipo de hotspot.
+                                                        </p>
+                                                        <div className="grid grid-cols-1 gap-2">
+                                                            {HOTSPOT_ICON_CUSTOM_IMAGE_TYPES.map(({ key, label }) => (
+                                                                <div key={key} className="rounded-md border border-border bg-background p-2 space-y-2">
+                                                                    <div className="flex items-center justify-between gap-2">
+                                                                        <div>
+                                                                            <p className="text-xs font-medium">{label}</p>
+                                                                        </div>
+                                                                        {hotspotCustomIconSelections[key] && (
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="sm"
+                                                                                className="h-6 px-1.5 text-[10px]"
+                                                                                onClick={() => {
+                                                                                    setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: null }));
+                                                                                }}
+                                                                            >
+                                                                                Limpar
+                                                                            </Button>
+                                                                        )}
+                                                                    </div>
+
+                                                                    <MediaSourceField
+                                                                        label={`Ícone ${label}`}
+                                                                        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                                                                        selection={hotspotCustomIconSelections[key] || null}
+                                                                        onChange={(selection) => {
+                                                                            setHotspotCustomIconSelections((prev) => ({ ...prev, [key]: selection }));
+                                                                        }}
+                                                                        destinationPath="media"
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* STEP 3: Cores */}
+                                {themeStep === "colors" && (
+                                    <div className="space-y-3">
+                                        <div className="space-y-1">
+                                            {/* Editor type */}
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <label className="text-sm font-medium">Tipo de edição</label>
+                                                <div className="inline-flex rounded-md border border-border p-0.5 gap-0.5 bg-muted/40">
+                                                    <Button
+                                                        size="sm"
+                                                        className="h-8 px-3"
+                                                        variant={editorVariant === "simple" ? "default" : "ghost"}
+                                                        onClick={() => setEditorVariant("simple")}
+                                                    >
+                                                        Simples
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        className="h-8 px-3"
+                                                        variant={editorVariant === "advanced" ? "default" : "ghost"}
+                                                        onClick={() => setEditorVariant("advanced")}
+                                                    >
+                                                        Avançado
+                                                    </Button>
                                                 </div>
                                             </div>
-                                        ))}
+                                        </div>
+
+                                        {/* Left 60% content */}
+                                        {editorVariant === "simple" ? (
+                                            <div className="rounded-xl border border-border p-2 space-y-1.5 h-[520px] overflow-y-auto pr-1">
+                                                {simpleEditorPresets.map((scheme) => (
+                                                    <SimpleSchemeCard
+                                                        key={scheme.id_theme_preset}
+                                                        scheme={scheme}
+                                                        isActive={isSchemeSelected(scheme)}
+                                                        onApply={() => applySimpleScheme(scheme)}
+                                                    />
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="rounded-xl border border-border p-2.5 h-[520px] overflow-y-auto space-y-3">
+                                                {VAR_GROUPS.map((group) => (
+                                                    <div key={group.label}>
+                                                        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                                                            {group.label}
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {group.keys.map((k) => (
+                                                                <ColorPickerRow
+                                                                    key={k}
+                                                                    varKey={k}
+                                                                    value={currentVars[k] || ""}
+                                                                    onChange={(key, val) => handleColorChange(editMode, key, val)}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>

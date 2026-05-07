@@ -68,7 +68,7 @@ const Logo = ({ width = 170, height = 100 }) => {
       {lightSrc ? (
         lightSrc.startsWith("/") ? (
           <Image
-            key={lightSrc}
+            key={`light-${lightSrc}`}
             src={lightSrc}
             alt="Logo modo claro"
             fill
@@ -77,7 +77,7 @@ const Logo = ({ width = 170, height = 100 }) => {
           />
         ) : (
           <img
-            key={lightSrc}
+            key={`light-${lightSrc}`}
             src={lightSrc}
             alt="Logo modo claro"
             className="block dark:hidden object-contain w-full h-full"
@@ -89,7 +89,7 @@ const Logo = ({ width = 170, height = 100 }) => {
       {darkSrc ? (
         darkSrc.startsWith("/") ? (
           <Image
-            key={darkSrc}
+            key={`dark-${darkSrc}`}
             src={darkSrc}
             alt="Logo modo escuro"
             fill
@@ -98,7 +98,7 @@ const Logo = ({ width = 170, height = 100 }) => {
           />
         ) : (
           <img
-            key={darkSrc}
+            key={`dark-${darkSrc}`}
             src={darkSrc}
             alt="Logo modo escuro"
             className={`hidden dark:block object-contain w-full h-full ${logos?.invertDark ? "dark:invert" : ""}`}

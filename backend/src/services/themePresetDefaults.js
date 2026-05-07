@@ -1,6 +1,3 @@
-const ThemePreset = require('../models/theme_preset');
-const logger = require('../models/logger');
-
 const DEFAULT_THEME_SYSTEM_KEY = 'default-base';
 
 const DEFAULT_LIGHT_VARS = {
@@ -284,57 +281,32 @@ const DEFAULT_THEME_PRESETS = [
     },
 ];
 
-async function seedThemePreset(defaultPreset) {
-    let preset = await ThemePreset.findOne({ where: { systemKey: defaultPreset.systemKey } });
-
-    if (!preset) {
-        preset = await ThemePreset.findOne({ where: { name: defaultPreset.name } });
-    }
-
-    if (!preset) {
-        await ThemePreset.create({
-            systemKey: defaultPreset.systemKey,
-            name: defaultPreset.name,
-            description: defaultPreset.description,
-            lightVars: defaultPreset.lightVars,
-            darkVars: defaultPreset.darkVars,
-        });
-        return 'created';
-    }
-
-    const updates = {};
-    if (!preset.systemKey) updates.systemKey = defaultPreset.systemKey;
-    if (!preset.description && defaultPreset.description) updates.description = defaultPreset.description;
-
-    if (Object.keys(updates).length > 0) {
-        await preset.update(updates);
-        return 'updated';
-    }
-
-    return 'skipped';
+function clonePreset(preset) {
+    return {
+        ...preset,
+        lightVars: { ...(preset.lightVars || {}) },
+        darkVars: { ...(preset.darkVars || {}) },
+    };
 }
 
-async function seedDefaultThemePresets() {
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    for (const defaultPreset of DEFAULT_THEME_PRESETS) {
-        const result = await seedThemePreset(defaultPreset);
-        if (result === 'created') createdCount += 1;
-        if (result === 'updated') updatedCount += 1;
-    }
-
-    if (createdCount > 0 || updatedCount > 0) {
-        logger.info(`Presets de tema default sincronizados: ${createdCount} criados, ${updatedCount} atualizados.`);
-    }
+function getDefaultThemePresetObject() {
+    const defaultPreset = DEFAULT_THEME_PRESETS.find((preset) => preset.systemKey === DEFAULT_THEME_SYSTEM_KEY);
+    if (!defaultPreset) return null;
+    return {
+        id_theme_preset: null,
+        ...clonePreset(defaultPreset),
+    };
 }
 
-function getDefaultThemePreset() {
-    return ThemePreset.findOne({ where: { systemKey: DEFAULT_THEME_SYSTEM_KEY } });
+function getStarterThemePresets() {
+    return DEFAULT_THEME_PRESETS.map((preset) => ({
+        id_theme_preset: `starter:${preset.systemKey}`,
+        ...clonePreset(preset),
+    }));
 }
 
 module.exports = {
     DEFAULT_THEME_SYSTEM_KEY,
-    seedDefaultThemePresets,
-    getDefaultThemePreset,
+    getDefaultThemePresetObject,
+    getStarterThemePresets,
 };
