@@ -45,6 +45,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const INSPECT3D_PREFIX = "insp3d:";
   const HOTSPOT_SCALE_MIN = 0.2;
   const HOTSPOT_DEFAULT_ICON_PATHS = {
+    texto: "icons/Text.png",
     audio: "icons/Audio.png",
     audioespacial: "icons/Audio3D.png",
     imagem: "icons/Imagem.png",
@@ -583,16 +584,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const tipos = [
-    { label: "Texto", value: "texto" },
-    { label: "Imagem", value: "imagem" },
-    { label: "Imagem (4 pontos)", value: "imagem4p" },
-    { label: "Modelo 3D", value: "modelo3d" },
-    { label: "Modelo 3D (Inspect)", value: "modelo3d_inspect" },
     { label: "Áudio", value: "audio" },
     { label: "Áudio Espacial", value: "audioespacial" },
-    { label: "Vídeo", value: "video" },
-    { label: "Navegação", value: "navegacao" },
+    { label: "Imagem", value: "imagem" },
+    { label: "Imagem (4 pontos)", value: "imagem4p" },
     { label: "Link", value: "link" },
+    { label: "Modelo 3D", value: "modelo3d" },
+    { label: "Modelo 3D (Inspect)", value: "modelo3d_inspect" },
+    { label: "Navegação", value: "navegacao" },
+    { label: "Texto", value: "texto" },
+    { label: "Vídeo", value: "video" },
   ];
 
   const isHdrOrExrByUrl = (url) => /\.(hdr|exr)(\?|$)/i.test(String(url || ""));
@@ -1946,12 +1947,19 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const tipoToAFrame = {
-    texto: (conteudo) => {
+    texto: (conteudo, hotspot) => {
       const iconConfig = getHotspotIconConfig();
+      const hotspotIcon = renderHotspotIcon(iconConfig, hotspot);
       const textFont = iconConfig.text_font || "roboto";
 
       return (
         <a-entity>
+          {hotspotIcon && !(hotspot?.hide_icon && !canManageHotspots) && (
+            <a-entity>
+              {hotspotIcon}
+            </a-entity>
+          )}
+
           <a-text
             value={String(conteudo || "Texto")}
             color="white"
@@ -2271,9 +2279,27 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
     };
 
+    const handleHotspotHoverEnter = (e) => {
+      const hotspotRoot = e.currentTarget?.closest?.(".hotspot-root");
+      const glowRing = hotspotRoot?.querySelector?.(".hotspot-hover-glow");
+      if (!glowRing) return;
+      glowRing.setAttribute("visible", "true");
+      glowRing.setAttribute("opacity", "1");
+    };
+
+    const handleHotspotHoverLeave = (e) => {
+      const hotspotRoot = e.currentTarget?.closest?.(".hotspot-root");
+      const glowRing = hotspotRoot?.querySelector?.(".hotspot-hover-glow");
+      if (!glowRing) return;
+      glowRing.setAttribute("visible", "false");
+      glowRing.setAttribute("opacity", "0");
+    };
+
     const clickablePlanes = scene.querySelectorAll(".hotspot-interaction");
     clickablePlanes.forEach((el) => {
       el.addEventListener("click", handler);
+      el.addEventListener("mouseenter", handleHotspotHoverEnter);
+      el.addEventListener("mouseleave", handleHotspotHoverLeave);
     });
 
     return () => {
@@ -2282,6 +2308,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       }
       clickablePlanes.forEach((el) => {
         el.removeEventListener("click", handler);
+        el.removeEventListener("mouseenter", handleHotspotHoverEnter);
+        el.removeEventListener("mouseleave", handleHotspotHoverLeave);
       });
     };
   }, [
@@ -3154,35 +3182,50 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         >
           {(!pos.tipo)
             ? <a-sphere position="0 0 0" radius="16" color="red" shadow="cast: true; receive: true" />
-            : (pos.hide_icon && !canManageHotspots)
-              ? null
-              : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
+            : tipoToAFrame[pos.tipo === "navegacao" ? "link" : pos.tipo]?.(pos.conteudo, pos) || null}
 
           {editDialogOpen && selectedHotspot?.id === pos.id && (
             <a-entity face-camera>
               <a-ring
-                radius-inner="21"
-                radius-outer="23"
-                color="#facc15"
-                material="side: double"
-                animation="property: scale; from: 1 1 1; to: 1.15 1.15 1.15; dur: 800; dir: alternate; loop: true"
+                radius-inner="6"
+                radius-outer="7"
+                color="#ffffff"
+                material="side: double; transparent: true; opacity: 0.7"
+                animation__pulse="property: scale; from: 1 1 1; to: 1.22 1.22 1.22; dur: 650; dir: alternate; easing: easeInOutSine; loop: true"
+                animation__fade="property: material.opacity; from: 0.35; to: 0.95; dur: 650; dir: alternate; easing: easeInOutSine; loop: true"
               />
             </a-entity>
           )}
 
-          <a-plane
-            className="clickable hotspot-interaction"
-            data-id={pos.id}
-            position="0 0 0"
-            width="25"
-            height="25"
-            material="color: #fff; opacity: 0; side: double; alphaTest: 1.000"
-            transparent="true"
-            rotation="0 0 0"
-            shadow="cast: false; receive: false"
-            event-set__enter="_event: mouseenter; opacity: 0.15"
-            event-set__leave="_event: mouseleave; opacity: 0"
-          />
+          {/* Glow effect on hover */}
+          {!(pos.hide_icon && !canManageHotspots) && (
+            <a-entity face-camera>
+              <a-ring
+                className="hotspot-hover-glow"
+                radius-inner="4"
+                radius-outer="4.5"
+                color="#ffffff"
+                material="side: double; emissive: #ffffff; emissiveIntensity: 0.35; transparent: true; opacity: 0.28"
+                animation="property: scale; from: 1 1 1; to: 1.03 1.03 1.03; dur: 850; dir: alternate; loop: true"
+                visible="false"
+                opacity="0"
+              />
+            </a-entity>
+          )}
+
+          {!(pos.hide_icon && !canManageHotspots) && (
+            <a-plane
+              className="clickable hotspot-interaction"
+              data-id={pos.id}
+              position="0 0 0"
+              width="25"
+              height="25"
+              material="color: #fff; opacity: 0; side: double; alphaTest: 1.000"
+              transparent="true"
+              rotation="0 0 0"
+              shadow="cast: false; receive: false"
+            />
+          )}
         </a-entity>
       ))}
     </a-scene>

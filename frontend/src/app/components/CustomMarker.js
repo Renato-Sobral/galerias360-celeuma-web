@@ -31,19 +31,30 @@ export default function CustomMarker({ id, latitude, longitude, name, image, ima
 
   const previewSrc = imageUrl || (image ? `data:image/jpeg;base64,${image}` : null);
   const hasUnsupportedMapPreview = /\.(hdr|exr)(\?|$)/i.test(String(previewSrc || ""));
+  const formattedViews = new Intl.NumberFormat("pt-PT").format(Number(views ?? 0));
+  const displayName = name || "Ponto";
 
   return (
     <Marker position={[parseFloat(latitude), parseFloat(longitude)]} icon={customIcon} eventHandlers={eventHandlers}>
       <Popup closeButton={false} className="ponto-popup" offset={[0, -14]}>
         <div
           onClick={handleClick}
-          className="group relative w-[240px] overflow-hidden cursor-pointer rounded-xl bg-card"
+          className="group relative w-[252px] max-w-[80vw] overflow-hidden cursor-pointer rounded-xl bg-card text-card-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleClick();
+            }
+          }}
+          aria-label={`Abrir ponto: ${displayName}`}
         >
           {onAddTrajeto && (
             <button
               type="button"
               onClick={handleAddTrajetoClick}
-              className="absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-white shadow-sm transition hover:bg-black"
+              className="absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm backdrop-blur-sm transition hover:bg-background"
               title="Adicionar trajeto"
               aria-label="Adicionar trajeto"
             >
@@ -51,16 +62,17 @@ export default function CustomMarker({ id, latitude, longitude, name, image, ima
             </button>
           )}
 
-          <div className="relative h-[148px] w-full overflow-hidden bg-muted">
+          <div className="relative h-[132px] w-full overflow-hidden bg-muted">
             {previewSrc && !hasUnsupportedMapPreview ? (
               <img
-                alt={name}
+                alt={displayName}
                 src={previewSrc}
+                loading="lazy"
                 className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
               />
             ) : previewSrc && hasUnsupportedMapPreview ? (
               <div className="absolute inset-0 flex items-center justify-center bg-muted text-xs font-medium text-muted-foreground">
-                Preview indisponivel para HDR/EXR
+                Preview indisponível para HDR/EXR
               </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
@@ -68,29 +80,46 @@ export default function CustomMarker({ id, latitude, longitude, name, image, ima
               </div>
             )}
             <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 to-transparent" />
-            <p className="absolute bottom-3 left-3 right-3 text-sm font-semibold text-white drop-shadow-sm">
-              {name}
+            <p className="absolute bottom-3 left-3 right-3 text-sm font-semibold leading-snug text-white drop-shadow-sm">
+              {displayName}
             </p>
           </div>
 
-          <div className="space-y-2 p-3">
-            <p
-              className="text-xs text-muted-foreground"
-              style={{
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
-            >
-              {description || "Sem descrição disponível"}
-            </p>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/70">
-              Categoria: {categoryName || "Sem categoria"}
-            </p>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-foreground/70">
-              {views ?? 0} visualizações
-            </p>
+          <div className="space-y-1.5 px-3 py-2.5">
+            {description ? (
+              <p
+                className="text-xs leading-snug text-muted-foreground"
+                style={{
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
+                {description}
+              </p>
+            ) : null}
+
+            <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+              <div>
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-foreground/60">Categoria</dt>
+                <dd
+                  className="mt-0.5 font-medium text-foreground"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {categoryName || "Sem categoria"}
+                </dd>
+              </div>
+              <div className="text-right">
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-foreground/60">Visualizações</dt>
+                <dd className="mt-0.5 font-medium text-foreground">{formattedViews}</dd>
+              </div>
+            </dl>
           </div>
         </div>
       </Popup>

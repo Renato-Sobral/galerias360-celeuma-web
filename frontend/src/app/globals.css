@@ -88,10 +88,13 @@
 }
 
 .leaflet-popup.ponto-popup .leaflet-popup-content-wrapper {
-  border-radius: 14px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
   padding: 0;
   overflow: hidden;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
 }
 
 .leaflet-popup.ponto-popup .leaflet-popup-content {
@@ -100,4 +103,185 @@
 
 .leaflet-popup.ponto-popup .leaflet-popup-tip {
   background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Leaflet Routing Machine — directions panel styled to match app theme */
+.leaflet-routing-container.route-details-panel {
+  position: fixed !important;
+  left: 12px !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: 12px !important;
+  transform: none !important;
+  width: min(520px, calc(100vw - 24px)) !important;
+  max-height: min(70vh, 620px) !important;
+  overflow: auto !important;
+  box-sizing: border-box;
+
+  background: hsl(var(--card) / 0.96) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 16px !important;
+  padding: 12px !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22) !important;
+  backdrop-filter: blur(10px);
+}
+
+@media (min-width: 640px) {
+  .leaflet-routing-container.route-details-panel {
+    left: calc(12px + 4rem) !important;
+    width: min(520px, calc(100vw - 24px - 4rem)) !important;
+  }
+}
+
+.leaflet-routing-container.route-details-panel * {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.leaflet-routing-container.route-details-panel a {
+  color: inherit;
+}
+
+.leaflet-routing-container.route-details-panel button {
+  font: inherit;
+}
+
+.leaflet-routing-container.route-details-panel h2,
+.leaflet-routing-container.route-details-panel h3 {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.leaflet-routing-container.route-details-panel h2 {
+  font-size: 16px;
+}
+
+.leaflet-routing-container.route-details-panel h3 {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  margin-top: 6px;
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-alt {
+  margin-top: 6px;
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-alt,
+.leaflet-routing-container.route-details-panel .leaflet-routing-geocoders {
+  border-radius: 12px;
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-geocoders {
+  margin-top: 8px;
+}
+
+.leaflet-routing-container.route-details-panel table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.leaflet-routing-container.route-details-panel td {
+  padding: 8px 6px;
+  vertical-align: top;
+}
+
+.leaflet-routing-container.route-details-panel td:first-child {
+  width: 30px;
+  padding-left: 2px;
+  padding-right: 2px;
+  text-align: center;
+}
+
+.leaflet-routing-container.route-details-panel td:nth-child(2) {
+  width: auto;
+}
+
+.leaflet-routing-container.route-details-panel td:last-child {
+  width: 72px;
+  text-align: right;
+}
+
+.leaflet-routing-container.route-details-panel tr+tr td {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.leaflet-routing-container.route-details-panel tr:hover {
+  background: hsl(var(--muted) / 0.6);
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-icon {
+  opacity: 0.9;
+  margin: 0 auto;
+}
+
+.dark .leaflet-routing-container.route-details-panel .leaflet-routing-icon {
+  filter: brightness(0) invert(1);
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-distance,
+.leaflet-routing-container.route-details-panel .leaflet-routing-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-summary {
+  color: hsl(var(--muted-foreground));
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-collapse-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.7);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.leaflet-routing-container.route-details-panel .leaflet-routing-collapse-btn:hover {
+  background: hsl(var(--muted) / 0.7);
+}
+
+.route-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.video-play-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.6);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.video-play-button:hover {
+  background: hsl(var(--muted) / 0.7);
+}
+
+.route-reverse-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.6);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.route-reverse-button:hover {
+  background: hsl(var(--muted) / 0.7);
 }

@@ -5,6 +5,7 @@ import { useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet-routing-machine";
 import Swal from "sweetalert2";
+import { getUserRoleFromToken } from "./jwtDecode";
 
 const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, rotaId, estatisticaRotaId, showDetails = true, onRouteReady, onRouteGeometry, onRouteRecomputeStart }) => {
   const map = useMap();
@@ -15,11 +16,14 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
   const onRouteReadyRef = useRef(onRouteReady);
   const onRouteGeometryRef = useRef(onRouteGeometry);
   const onRouteRecomputeStartRef = useRef(onRouteRecomputeStart);
-  const videoInsertedRef = useRef(false);
+  const routeActionsInsertedRef = useRef(false);
+  const videoAvailabilityRef = useRef(undefined);
+  const videoAvailabilityPromiseRef = useRef(null);
   const hasRouteDetailsRef = useRef(false);
   const routeReadyNotifiedRef = useRef(false);
   const visibleRef = useRef(visible);
   const routeCoordinatesRef = useRef([]);
+  const isAdmin = useMemo(() => getUserRoleFromToken() === "Admin", []);
 
   // Estados para controlar modal e URL do vídeo
   const [modalOpen, setModalOpen] = useState(false);
@@ -74,6 +78,102 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
         confirmButtonColor: "#171717",
       });
     }
+  };
+
+  const checkVideoAvailable = async () => {
+    if (!rotaId) return false;
+
+    if (videoAvailabilityRef.current !== undefined) {
+      return Boolean(videoAvailabilityRef.current);
+    }
+
+    if (videoAvailabilityPromiseRef.current) {
+      return videoAvailabilityPromiseRef.current;
+    }
+
+    const promise = fetch(`${process.env.NEXT_PUBLIC_API_URL}/trajeto/video/${rotaId}`)
+      .then(async (response) => {
+        if (!response.ok) return false;
+        const data = await response.json().catch(() => null);
+        return Boolean(data?.videoPath);
+      })
+      .catch(() => false)
+      .then((available) => {
+        videoAvailabilityRef.current = available;
+        videoAvailabilityPromiseRef.current = null;
+        return available;
+      });
+
+    videoAvailabilityPromiseRef.current = promise;
+    return promise;
+  };
+
+  const ensureRouteActionsRow = async (container) => {
+    if (!container || routeActionsInsertedRef.current) return;
+
+    const alt = container.querySelector(".leaflet-routing-alt");
+    if (!alt) return;
+
+    const [hasVideo, adminCanReverse] = await Promise.all([
+      checkVideoAvailable(),
+      Promise.resolve(Boolean(isAdmin)),
+    ]);
+
+    const shouldShowVideo = Boolean(rotaId && hasVideo);
+    const shouldShowReverse = Boolean(adminCanReverse);
+    if (!shouldShowVideo && !shouldShowReverse) return;
+
+    const h3 = alt.querySelector("h3");
+    const actionRow = document.createElement("div");
+    actionRow.className = "route-actions-row";
+
+    if (shouldShowVideo) {
+      const button = document.createElement("button");
+      button.className = "video-play-button";
+      button.title = "Ver vídeo do trajeto";
+      button.setAttribute("type", "button");
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "currentColor");
+
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", "M8 5v14l11-7z");
+      svg.appendChild(path);
+
+      button.appendChild(svg);
+
+      const span = document.createElement("span");
+      span.textContent = "Ver vídeo do trajeto";
+      button.appendChild(span);
+
+      button.addEventListener("click", handlePlayClick);
+      actionRow.appendChild(button);
+    }
+
+    if (shouldShowReverse) {
+      const invertButton = document.createElement("button");
+      invertButton.className = "route-reverse-button";
+      invertButton.title = "Inverter direção da rota";
+      invertButton.setAttribute("type", "button");
+      invertButton.textContent = "Inverter direção";
+      invertButton.addEventListener("click", () => {
+        onRouteRecomputeStartRef.current?.();
+        setIsDirectionReversed((prev) => !prev);
+      });
+      actionRow.appendChild(invertButton);
+    }
+
+    if (h3?.parentNode) {
+      h3.parentNode.insertBefore(actionRow, h3.nextSibling);
+    } else {
+      alt.prepend(actionRow);
+    }
+
+    routeActionsInsertedRef.current = true;
   };
 
   useEffect(() => {
@@ -212,7 +312,9 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
 
       container.classList.remove("leaflet-routing-container-hide");
 
-      const isDark = document.documentElement.classList.contains("dark");
+      container.classList.add("route-details-panel");
+      container.setAttribute("role", "dialog");
+      container.setAttribute("aria-label", "Detalhes do trajeto");
 
       const statsRouteId = estatisticaRotaId ?? rotaId;
       const canRegisterStats = Number.isFinite(Number(statsRouteId)) && Number(statsRouteId) > 0;
@@ -234,28 +336,9 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
           });
       }
 
-      Object.assign(container.style, {
-        display: "block",
-        zIndex: "9999",
-        position: "fixed",
-        top: "auto",
-        right: "auto",
-        bottom: "12px",
-        left: "96px",
-        backgroundColor: isDark
-          ? "rgba(0, 0, 0, 0.95)"
-          : "rgba(255, 255, 255, 0.9)",
-        color: isDark ? "#ffffff" : "#0A0A0A",
-        padding: "10px 12px",
-        width: "min(340px, calc(100vw - 108px))",
-        borderRadius: "8px",
-        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
-        maxHeight: "65vh",
-        overflowY: "auto",
-        boxSizing: "border-box",
-        fontSize: "14px",
-        lineHeight: "1.35",
-      });
+      container.style.display = "block";
+      container.style.pointerEvents = "auto";
+      container.style.zIndex = "9999";
 
       const altEl = container.querySelector(".leaflet-routing-alt");
       if (altEl) {
@@ -263,138 +346,7 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
         altEl.style.overflowY = "visible";
       }
 
-      if (isDark) {
-        const icons = container.querySelectorAll(".leaflet-routing-icon");
-        icons.forEach((icon) => {
-          icon.style.filter = "brightness(0) invert(1)";
-        });
-      }
-
-      const styleTagId = "routing-hover-style";
-      if (!document.getElementById(styleTagId)) {
-        const style = document.createElement("style");
-        style.id = styleTagId;
-        style.innerHTML = `
-          .leaflet-routing-container tr:hover {
-            background-color: ${isDark ? "rgba(255, 255, 255, 0.1)" : "#f0f0f0"};
-          }
-        `;
-        document.head.appendChild(style);
-      }
-
-      if (rotaId && !videoInsertedRef.current) {
-        const alt = container.querySelector(".leaflet-routing-alt");
-        if (alt && !alt.querySelector(".video-play-button")) {
-          const h3 = alt.querySelector("h3");
-
-          const actionRow = document.createElement("div");
-          actionRow.className = "route-actions-row";
-          Object.assign(actionRow.style, {
-            marginTop: "8px",
-            marginBottom: "12px",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            flexWrap: "wrap",
-          });
-
-          const button = document.createElement("button");
-          button.className = "video-play-button";
-          button.title = "Ver vídeo do trajeto";
-          button.setAttribute("type", "button");
-          Object.assign(button.style, {
-            fontSize: "14px",
-            color: isDark ? "#f3f3f3" : "#0A0A0A",
-            backgroundColor: "transparent",
-            border: "none",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "4px 8px",
-            borderRadius: "4px",
-            transition: "background-color 0.3s ease",
-          });
-          button.onmouseover = () => {
-            button.style.backgroundColor = isDark
-              ? "rgba(255, 255, 255, 0.2)"
-              : "rgba(0, 0, 0, 0.1)";
-          };
-          button.onmouseout = () => {
-            button.style.backgroundColor = "transparent";
-          };
-
-          const svgNS = "http://www.w3.org/2000/svg";
-          const svg = document.createElementNS(svgNS, "svg");
-          svg.setAttribute("width", "16");
-          svg.setAttribute("height", "16");
-          svg.setAttribute("viewBox", "0 0 24 24");
-          svg.setAttribute("fill", isDark ? "#f3f3f3" : "#0A0A0A");
-
-          const path = document.createElementNS(svgNS, "path");
-          path.setAttribute("d", "M8 5v14l11-7z");
-          svg.appendChild(path);
-
-          button.appendChild(svg);
-
-          const span = document.createElement("span");
-          span.textContent = "Ver vídeo do trajeto";
-          button.appendChild(span);
-
-          button.addEventListener("click", handlePlayClick);
-
-          const invertButton = document.createElement("button");
-          invertButton.className = "route-reverse-button";
-          invertButton.title = "Inverter direção da rota";
-          invertButton.setAttribute("type", "button");
-          Object.assign(invertButton.style, {
-            fontSize: "13px",
-            color: isDark ? "#f3f3f3" : "#0A0A0A",
-            backgroundColor: "transparent",
-            border: `1px solid ${isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.2)"}`,
-            cursor: "pointer",
-            padding: "4px 8px",
-            borderRadius: "4px",
-            transition: "background-color 0.3s ease",
-          });
-          invertButton.textContent = "Inverter direção";
-
-          invertButton.onmouseover = () => {
-            invertButton.style.backgroundColor = isDark
-              ? "rgba(255, 255, 255, 0.16)"
-              : "rgba(0, 0, 0, 0.06)";
-          };
-          invertButton.onmouseout = () => {
-            invertButton.style.backgroundColor = "transparent";
-          };
-          invertButton.addEventListener("click", () => {
-            onRouteRecomputeStartRef.current?.();
-            setIsDirectionReversed((prev) => !prev);
-          });
-
-          actionRow.appendChild(button);
-          actionRow.appendChild(invertButton);
-
-          if (h3?.parentNode) {
-            h3.parentNode.insertBefore(actionRow, h3.nextSibling);
-          } else {
-            alt.prepend(actionRow);
-          }
-
-          videoInsertedRef.current = true;
-        }
-      }
-
-      if (isDark) {
-        const elements = container.querySelectorAll(
-          "h3, a, span, div, button"
-        );
-        elements.forEach((el) => {
-          el.style.color = "#f3f3f3";
-        });
-      }
-
-      console.log("ID do trajeto clicado:", rotaId);
+      ensureRouteActionsRow(container);
     });
   };
 
@@ -492,6 +444,11 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
       control.addTo(map);
       control.route();
       if (control._container) {
+        if (showDetails) {
+          control._container.classList.add("route-details-panel");
+          control._container.setAttribute("role", "dialog");
+          control._container.setAttribute("aria-label", "Detalhes do trajeto");
+        }
         control._container.style.display = "none";
         control._container.style.pointerEvents = "none";
       }
@@ -508,7 +465,9 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
         controlRef.current = null;
       }
 
-      videoInsertedRef.current = false;
+      routeActionsInsertedRef.current = false;
+      videoAvailabilityRef.current = undefined;
+      videoAvailabilityPromiseRef.current = null;
       routeCoordinatesRef.current = [];
     };
   }, [map, coordinatesSignature, waypointsFromSignature, rotaId, estatisticaRotaId]);
@@ -526,6 +485,7 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
       container.style.display = canShow ? "block" : "none";
       container.style.pointerEvents = canShow ? "auto" : "none";
       if (canShow) {
+        container.classList.add("route-details-panel");
         container.classList.remove("leaflet-routing-container-hide");
       } else {
         container.classList.add("leaflet-routing-container-hide");
@@ -538,60 +498,27 @@ const RoutingMachine = ({ coordinates, active = false, visible = true, onClick, 
       {/* Modal do vídeo */}
       {modalOpen && (
         <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0,0,0,0.7)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 10000,
-            padding: "1rem",
-          }}
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4"
           onClick={() => setModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Vídeo do trajeto"
         >
           <div
-            style={{
-              position: "relative",
-              background: "#000",
-              width: "80vw",
-              maxWidth: "1200px",
-              aspectRatio: "16 / 9",
-              borderRadius: 8,
-              overflow: "hidden",
-            }}
+            className="relative w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <video
-              src={videoUrl}
-              controls
-              autoPlay
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                borderRadius: 0,
-                margin: 0,
-                padding: 0,
-                display: "block",
-                backgroundColor: "#000",
-              }}
-            />
+            <div className="aspect-video bg-black">
+              <video
+                src={videoUrl}
+                controls
+                autoPlay
+                className="h-full w-full object-contain"
+              />
+            </div>
             <button
               onClick={() => setModalOpen(false)}
-              style={{
-                position: "absolute",
-                top: 10,
-                right: 10,
-                background: "transparent",
-                border: "none",
-                color: "#fff",
-                fontSize: 24,
-                cursor: "pointer",
-              }}
+              className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition hover:bg-black/75 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Fechar vídeo"
             >
               &times;

@@ -53,7 +53,7 @@ const Sidebar = () => {
 
       <div
         className={`${isOpen ? "translate-x-0" : "-translate-x-full"
-          } sm:translate-x-0 fixed sm:static top-0 left-0 h-screen w-64 sm:w-16 bg-background text-foreground border-r border-border z-50 transform transition-transform duration-300 ease-in-out flex flex-col justify-between`}
+          } sm:translate-x-0 fixed sm:sticky top-0 left-0 h-screen w-64 sm:w-16 bg-background text-foreground border-r border-border z-50 transform transition-transform duration-300 ease-in-out flex flex-col justify-between`}
       >
         {/* Topo */}
         <div>
