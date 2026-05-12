@@ -2222,7 +2222,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
       const isHotspot = e.target?.classList?.contains("hotspot-interaction");
       if (!isHotspot) {
-        setSelectedHotspot(null);
+        if (!editDialogOpen) {
+          setSelectedHotspot(null);
+        }
         clickEventRef.current = e;
       }
     };
