@@ -52,6 +52,10 @@ const Hotspot = sequelize.define('hotspots', {
     allowNull: false,
     defaultValue: false,
   },
+  custom_config: {
+    type: DataTypes.JSON,
+    allowNull: true,
+  },
 }, {
   tableName: 'hotspots',
   timestamps: false,

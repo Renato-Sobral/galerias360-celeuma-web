@@ -7,9 +7,122 @@ import ContextMenuWrapper from "./ContextMenuWrapper";
 import CustomDialog from "./CustomDialog";
 import DropdownSingle from "./select";
 import MediaSourceField from "./MediaSourceField";
+import { Button } from "@/components/ui/button";
 import Swal from "sweetalert2";
-import { createLibrarySelection, resolveMediaSelection, resolveUploadsUrl, relativePathFromUploadsUrl } from "../lib/media-library";
-import { getUserRoleFromToken, getUserRoleIdFromToken } from "./jwtDecode";
+import {
+  createLibrarySelection,
+  resolveMediaSelection,
+  resolveUploadsUrl,
+  relativePathFromUploadsUrl,
+  uploadFileToMediaLibrary,
+} from "../lib/media-library";
+import { getUserRoleFromToken, getUserRoleIdFromToken, getUserIdFromToken } from "./jwtDecode";
+
+// Hook para drag-to-change em inputs numéricos (estilo Blender)
+const useDragToChange = (value, onChange, sensitivity = 0.5) => {
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startValueRef = useRef(value);
+  const hasDraggedRef = useRef(false);
+
+  const handleMouseDown = (e, inputRef) => {
+    // Não inicia drag logo, espera para ver se o utilizador arrasta
+    startXRef.current = e.clientX;
+    startValueRef.current = Number(value) || 0;
+    hasDraggedRef.current = false;
+    document.body.style.userSelect = "none";
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (hasDraggedRef.current || !startXRef.current) return;
+
+      const deltaX = e.clientX - startXRef.current;
+
+      // Se moveu mais de 2 pixels, começa o drag
+      if (Math.abs(deltaX) > 2) {
+        hasDraggedRef.current = true;
+        setIsDragging(true);
+        document.body.style.cursor = "ew-resize";
+      }
+    };
+
+    const handleMouseMove2 = (e) => {
+      if (!hasDraggedRef.current || !isDragging) return;
+
+      const deltaX = e.clientX - startXRef.current;
+      let multiplier = sensitivity;
+
+      if (e.shiftKey) multiplier *= 0.1; // Mais preciso
+      if (e.ctrlKey || e.metaKey) multiplier *= 2; // Menos preciso
+
+      const newValue = startValueRef.current + deltaX * multiplier;
+      onChange(newValue);
+    };
+
+    const handleMouseUp = () => {
+      document.body.style.userSelect = "";
+      if (isDragging) {
+        setIsDragging(false);
+        document.body.style.cursor = "";
+      }
+      startXRef.current = 0;
+    };
+
+    if (isDragging) {
+      document.addEventListener("mousemove", handleMouseMove2);
+    } else {
+      document.addEventListener("mousemove", handleMouseMove);
+    }
+
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mousemove", handleMouseMove2);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging, sensitivity, onChange]);
+
+  return { isDragging, handleMouseDown };
+};
+
+// Componente para input numérico com drag (estilo Blender)
+function DragNumberInput({ label, value, onChange, step = 0.1 }) {
+  const inputRef = useRef(null);
+  const { isDragging, handleMouseDown } = useDragToChange(value, onChange, step);
+
+  const handleClick = () => {
+    // Ao clicar, seleciona todo o texto e coloca em foco
+    if (inputRef.current) {
+      inputRef.current.select();
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium">{label}</label>
+      <input
+        ref={inputRef}
+        type="number"
+        step={step}
+        value={Number(value) || 0}
+        onChange={(e) => {
+          const next = parseFloat(e.target.value);
+          if (!Number.isFinite(next)) return;
+          onChange(next);
+        }}
+        onMouseDown={(e) => {
+          handleMouseDown(e, inputRef);
+          handleClick();
+        }}
+        onClick={handleClick}
+        className={`border rounded px-2 py-1 text-sm dark:bg-black cursor-ew-resize ${isDragging ? "ring-2 ring-cyan-500" : ""
+          }`}
+      />
+    </div>
+  );
+}
 
 const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigateOnHotspot = false }) => {
   const API_BASE =
@@ -29,6 +142,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return userRole !== "User";
   }, [userRole, userRoleId]);
 
+  const isAdminUser = useMemo(() => String(userRole || "").toLowerCase() === "admin", [userRole]);
+
   const showEditContextMenu = enableContextMenu && canManageHotspots;
 
   const buildApiUrl = (path) => {
@@ -44,6 +159,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const IMAGE4P_PREFIX = "img4p:";
   const INSPECT3D_PREFIX = "insp3d:";
   const HOTSPOT_SCALE_MIN = 0.2;
+  const DEFAULT_HOTSPOT_CUSTOM_CONFIG = {
+    enabled: false,
+    allow_content: { enabled: false, maxLength: 20000 },
+    allow_position: { enabled: false, range: 250 },
+    allow_transform: {
+      enabled: false,
+      scale: { min: HOTSPOT_SCALE_MIN, max: 10 },
+      yaw: { min: -360, max: 360 },
+      pitch: { min: -180, max: 180 },
+    },
+  };
   const HOTSPOT_DEFAULT_ICON_PATHS = {
     texto: "icons/Text.png",
     audio: "icons/Audio.png",
@@ -89,6 +215,118 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const clamp01 = (value, fallback = 0) => {
     const numeric = toFiniteNumber(value, fallback);
     return Math.max(0, Math.min(1, numeric));
+  };
+
+  const normalizeHotspotCustomConfig = (rawConfig) => {
+    const cfg = (rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)) ? rawConfig : {};
+    const allowContent = (cfg.allow_content && typeof cfg.allow_content === 'object') ? cfg.allow_content : {};
+    const allowPosition = (cfg.allow_position && typeof cfg.allow_position === 'object') ? cfg.allow_position : {};
+    const allowTransform = (cfg.allow_transform && typeof cfg.allow_transform === 'object') ? cfg.allow_transform : {};
+
+    const scaleCfg = (allowTransform.scale && typeof allowTransform.scale === 'object') ? allowTransform.scale : {};
+    const yawCfg = (allowTransform.yaw && typeof allowTransform.yaw === 'object') ? allowTransform.yaw : {};
+    const pitchCfg = (allowTransform.pitch && typeof allowTransform.pitch === 'object') ? allowTransform.pitch : {};
+
+    return {
+      enabled: Boolean(cfg.enabled),
+      allow_content: {
+        enabled: Boolean(allowContent.enabled),
+        maxLength: Math.max(0, Math.floor(toFiniteNumber(allowContent.maxLength, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_content.maxLength))),
+      },
+      allow_position: {
+        enabled: Boolean(allowPosition.enabled),
+        range: Math.max(0, toFiniteNumber(allowPosition.range, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_position.range)),
+      },
+      allow_transform: {
+        enabled: Boolean(allowTransform.enabled),
+        scale: {
+          min: Math.max(HOTSPOT_SCALE_MIN, toFiniteNumber(scaleCfg.min, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.scale.min)),
+          max: Math.max(HOTSPOT_SCALE_MIN, toFiniteNumber(scaleCfg.max, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.scale.max)),
+        },
+        yaw: {
+          min: toFiniteNumber(yawCfg.min, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.yaw.min),
+          max: toFiniteNumber(yawCfg.max, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.yaw.max),
+        },
+        pitch: {
+          min: toFiniteNumber(pitchCfg.min, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.pitch.min),
+          max: toFiniteNumber(pitchCfg.max, DEFAULT_HOTSPOT_CUSTOM_CONFIG.allow_transform.pitch.max),
+        },
+      },
+    };
+  };
+
+  const normalizeUserOverrides = (rawOverrides) => {
+    const obj = (rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)) ? rawOverrides : {};
+    const out = {};
+    if (typeof obj.conteudo === 'string') out.conteudo = obj.conteudo;
+    for (const key of ['dx', 'dy', 'dz', 'scale', 'rot_yaw', 'rot_pitch']) {
+      const num = Number(obj[key]);
+      if (Number.isFinite(num)) out[key] = num;
+    }
+    return out;
+  };
+
+  const getUserCustomizationStorageKey = (userId, pointId) => {
+    const safeUserId = Number.isFinite(Number(userId)) ? Number(userId) : "guest";
+    const safePointId = String(pointId || pontoId || "default");
+    return `galerias360:userHotspotCustomizations:${safeUserId}:${safePointId}`;
+  };
+
+  const filterOverridesByCustomConfig = (overrides, customConfig, hotspotType = "") => {
+    const cfg = normalizeHotspotCustomConfig(customConfig);
+    if (!cfg.enabled) return {};
+
+    const out = {};
+    if (cfg.allow_content.enabled && typeof overrides.conteudo === 'string') {
+      if (String(hotspotType || "") === "imagem4p") {
+        out.conteudo = overrides.conteudo;
+      } else {
+        out.conteudo = overrides.conteudo.slice(0, cfg.allow_content.maxLength);
+      }
+    }
+    if (cfg.allow_position.enabled) {
+      const range = cfg.allow_position.range;
+      for (const key of ['dx', 'dy', 'dz']) {
+        if (typeof overrides[key] === 'number') {
+          out[key] = Math.max(-range, Math.min(range, overrides[key]));
+        }
+      }
+    }
+    if (cfg.allow_transform.enabled) {
+      if (typeof overrides.scale === 'number') {
+        out.scale = Math.max(cfg.allow_transform.scale.min, Math.min(cfg.allow_transform.scale.max, overrides.scale));
+      }
+      if (typeof overrides.rot_yaw === 'number') {
+        out.rot_yaw = Math.max(cfg.allow_transform.yaw.min, Math.min(cfg.allow_transform.yaw.max, overrides.rot_yaw));
+      }
+      if (typeof overrides.rot_pitch === 'number') {
+        out.rot_pitch = Math.max(cfg.allow_transform.pitch.min, Math.min(cfg.allow_transform.pitch.max, overrides.rot_pitch));
+      }
+    }
+    return out;
+  };
+
+  const applyUserOverridesToHotspot = (hotspot, rawOverrides) => {
+    const cfg = normalizeHotspotCustomConfig(hotspot?.custom_config);
+    if (!cfg.enabled) return hotspot;
+
+    const overrides = filterOverridesByCustomConfig(normalizeUserOverrides(rawOverrides), cfg);
+    if (!overrides || Object.keys(overrides).length === 0) return hotspot;
+
+    const baseX = toFiniteNumber(hotspot?.x, 0);
+    const baseY = toFiniteNumber(hotspot?.y, 0);
+    const baseZ = toFiniteNumber(hotspot?.z, 0);
+
+    return {
+      ...hotspot,
+      x: typeof overrides.dx === 'number' ? baseX + overrides.dx : hotspot.x,
+      y: typeof overrides.dy === 'number' ? baseY + overrides.dy : hotspot.y,
+      z: typeof overrides.dz === 'number' ? baseZ + overrides.dz : hotspot.z,
+      scale: typeof overrides.scale === 'number' ? overrides.scale : hotspot.scale,
+      rot_yaw: typeof overrides.rot_yaw === 'number' ? overrides.rot_yaw : hotspot.rot_yaw,
+      rot_pitch: typeof overrides.rot_pitch === 'number' ? overrides.rot_pitch : hotspot.rot_pitch,
+      conteudo: typeof overrides.conteudo === 'string' ? overrides.conteudo : hotspot.conteudo,
+    };
   };
 
   const createContactShadowMesh = (THREE, opacity) => {
@@ -191,6 +429,85 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     } catch {
       return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "" };
     }
+  };
+
+  const compressImageFile = async (file) => {
+    const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB
+    const MAX_DIMENSION = 1024; // smaller for performance
+
+    return new Promise((resolve, reject) => {
+      if (file.size > MAX_FILE_SIZE) {
+        reject(new Error(`Imagem demasiado grande. Máximo: 2MB. Tamanho: ${(file.size / 1024 / 1024).toFixed(2)}MB`));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const img = new Image();
+          img.onload = () => {
+                       try {
+            const canvas = document.createElement("canvas");
+            let width = img.width;
+            let height = img.height;
+
+            // Redimensionar se necessário
+            if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+              const ratio = Math.min(MAX_DIMENSION / width, MAX_DIMENSION / height);
+              width = Math.round(width * ratio);
+              height = Math.round(height * ratio);
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+                         if (!ctx) {
+                           reject(new Error("Falha ao criar contexto canvas"));
+                           return;
+                         }
+            ctx.drawImage(img, 0, 0, width, height);
+
+               // Converter para JPEG comprimido com qualidade progressiva
+               let quality = 0.8;
+               const attemptCompress = () => {
+                 canvas.toBlob((blob) => {
+                   if (!blob) {
+                     if (quality > 0.3) {
+                       quality -= 0.1;
+                       attemptCompress();
+                     } else {
+                       reject(new Error("Falha ao comprimir imagem"));
+                     }
+                     return;
+                   }
+
+                   const compressedReader = new FileReader();
+                   compressedReader.onload = () => {
+                     const dataUrl = String(compressedReader.result || "");
+                     if (!dataUrl.startsWith("data:")) {
+                       reject(new Error("Falha ao converter imagem para data URL"));
+                       return;
+                     }
+                     resolve(dataUrl);
+                   };
+                   compressedReader.onerror = () => reject(new Error("Falha ao ler blob comprimido"));
+                   compressedReader.readAsDataURL(blob);
+                 }, "image/jpeg", quality);
+               };
+               attemptCompress();
+             } catch (error) {
+               reject(error);
+             }
+          };
+          img.onerror = () => reject(new Error("Falha ao carregar imagem"));
+          img.src = String(e.target?.result || "");
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = () => reject(new Error("Falha ao ler ficheiro"));
+      reader.readAsDataURL(file);
+    });
   };
 
   const encodeImage4pValue = (payload) => {
@@ -335,10 +652,12 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const image4pMagnifierPointerRef = useRef({ clientX: 0, clientY: 0, active: false });
   const image4pMagnifierRafRef = useRef(null);
   const image4pMagnifierCORSBlockedRef = useRef(false);
+  const fileInputRef = useRef(null);
   const [selectedHotspot, setSelectedHotspot] = useState(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editStep, setEditStep] = useState("type");
   const [domeDialogOpen, setDomeDialogOpen] = useState(false);
+  const [domeEditStep, setDomeEditStep] = useState("guides");
   const [showAlignmentGuides, setShowAlignmentGuides] = useState(true);
   const [alignmentGuidesOpacity, setAlignmentGuidesOpacity] = useState(0.65);
   const [editTipo, setEditTipo] = useState("");
@@ -348,6 +667,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editZ, setEditZ] = useState(0);
   const [editStickToGround, setEditStickToGround] = useState(false);
   const [editHideIcon, setEditHideIcon] = useState(false);
+  const [editCustomConfig, setEditCustomConfig] = useState(() => DEFAULT_HOTSPOT_CUSTOM_CONFIG);
   const [editYaw, setEditYaw] = useState(0);
   const [editPitch, setEditPitch] = useState(0);
   const [domeRadius, setDomeRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
@@ -368,6 +688,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editModelSelection, setEditModelSelection] = useState(null);
   const [editImageSelection, setEditImageSelection] = useState(null);
   const [editImage4pSelection, setEditImage4pSelection] = useState(null);
+  const [editImage4pTab, setEditImage4pTab] = useState("files");
   const [editImage4pPreviewUrl, setEditImage4pPreviewUrl] = useState("");
   const [editImage4pPoints, setEditImage4pPoints] = useState([]);
   const [editImage4pOpacity, setEditImage4pOpacity] = useState(1);
@@ -399,6 +720,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const navigationTransitionTimerRef = useRef(null);
   const navigationProgressIntervalRef = useRef(null);
   const domeSettingsSaveTimerRef = useRef(null);
+  const userCustomSyncTimerRef = useRef(null);
+  const userCustomSyncPendingRef = useRef(null);
   const NAVIGATION_FADE_MS = 220;
   const NAVIGATION_WARP_OUT_MS = 240;
   const NAVIGATION_WARP_IN_MS = 260;
@@ -409,6 +732,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const videoRef = useRef(null);
   const [videoReady, setVideoReady] = useState(false);
   const [environmentLoadError, setEnvironmentLoadError] = useState("");
+
+  const [myHotspotCustomizations, setMyHotspotCustomizations] = useState({});
+  const [userCustomMenuOpen, setUserCustomMenuOpen] = useState(false);
+  const [userCustomHotspot, setUserCustomHotspot] = useState(null);
+  const [userCustomDraft, setUserCustomDraft] = useState({ dx: 0, dy: 0, dz: 0, scale: 1, rot_yaw: 0, rot_pitch: 0, conteudo: "" });
+  const [userCustomDraftFileName, setUserCustomDraftFileName] = useState("");
+  const [userCustomSaving, setUserCustomSaving] = useState(false);
+  const currentUserId = useMemo(() => getUserIdFromToken(), []);
+  const userCustomStorageKey = useMemo(
+    () => getUserCustomizationStorageKey(currentUserId, activePontoId || pontoId),
+    [activePontoId, currentUserId, pontoId]
+  );
 
   const [editingItem, setEditingItem] = useState(null);
   const normalizeDomeUrlKey = (value) => String(value || "").split("?")[0].split("#")[0];
@@ -883,8 +1218,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editNavigationMode,
   ]);
 
+  const effectiveHotspots = useMemo(() => {
+    if (canManageHotspots) return previewHotspots;
+
+    const list = Array.isArray(previewHotspots) ? previewHotspots : [];
+    return list.map((hotspot) => {
+      const overrides = myHotspotCustomizations?.[hotspot?.id];
+      return applyUserOverridesToHotspot(hotspot, overrides);
+    });
+  }, [applyUserOverridesToHotspot, canManageHotspots, myHotspotCustomizations, previewHotspots]);
+
   const warpOverlays = useMemo(() => {
-    return (Array.isArray(previewHotspots) ? previewHotspots : [])
+    const result = (Array.isArray(effectiveHotspots) ? effectiveHotspots : [])
       .filter((h) => String(h?.tipo || "") === "imagem4p")
       .map((h) => {
         const payload = decodeImage4pValue(h?.conteudo);
@@ -906,7 +1251,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           : null;
       })
       .filter(Boolean);
-  }, [previewHotspots]);
+    return result;
+  }, [effectiveHotspots]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1241,6 +1587,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           this._texture = null;
           this._textureLoader = new THREE.TextureLoader();
           this._textureLoader.crossOrigin = "anonymous";
+          this._forceRebuild = false;
         },
         remove() {
           if (this._group || this._mesh) {
@@ -1262,6 +1609,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         },
         update(oldData) {
           const src = String(this.data.src || "").trim();
+          const srcChanged = oldData?.src !== src;
           const encodedPoints = String(this.data.points || "");
           const encodedMaskPoints = String(this.data.occlusionMaskPoints || "");
           let points = [];
@@ -1485,7 +1833,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             });
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.frustumCulled = false;
+            mesh.frustumCulled = true;
             mesh.renderOrder = 20;
 
             const group = new THREE.Group();
@@ -1508,7 +1856,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   colorWrite: false,
                 });
                 occlusionMaskMesh = new THREE.Mesh(occlusionMaskGeometry, occlusionMaskMaterial);
-                occlusionMaskMesh.frustumCulled = false;
+                occlusionMaskMesh.frustumCulled = true;
                 occlusionMaskMesh.renderOrder = 19;
                 group.add(occlusionMaskMesh);
               }
@@ -1524,15 +1872,27 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             this.el.setObject3D("mesh", group);
           };
 
-          if (!this._texture || oldData?.src !== src) {
+          if (!this._texture || srcChanged) {
+            // Clean up old mesh immediately if src changed
+            if (srcChanged && (this._group || this._mesh)) {
+              this.el.removeObject3D("mesh");
+              this._group = null;
+              this._mesh = null;
+              this._occlusionMaskMesh = null;
+            }
+
             this._texture?.dispose?.();
             this._texture = null;
+            this._forceRebuild = true;
 
             this._textureLoader.load(
               src,
               (tex) => {
                 tex.wrapS = THREE.ClampToEdgeWrapping;
                 tex.wrapT = THREE.ClampToEdgeWrapping;
+                tex.magFilter = THREE.LinearFilter;
+                tex.minFilter = THREE.LinearFilter;
+                tex.generateMipmaps = false;
                 tex.needsUpdate = true;
                 this._texture = tex;
                 buildOrUpdateMesh(tex);
@@ -1542,13 +1902,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 // ignore load errors; leave empty
               }
             );
-          } else {
+          } else if (this._forceRebuild && this._texture) {
+            buildOrUpdateMesh(this._texture);
+            this._forceRebuild = false;
+          } else if (this._texture) {
             buildOrUpdateMesh(this._texture);
           }
         },
       });
     }
   }, []);
+
+
 
   useEffect(() => {
     setActiveEnvironment(environment);
@@ -1723,7 +2088,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
         sceneEl.object3D.traverse((obj) => {
           if (obj?.isLight) {
-            obj.castShadow = true;
+            // AmbientLight não suporta sombras
+            if (!obj.isAmbientLight) {
+              obj.castShadow = true;
+            }
             if (obj.shadow) {
               obj.shadow.mapSize?.set?.(2048, 2048);
               obj.shadow.bias = DEFAULT_POINT_LIGHT_SHADOW_BIAS;
@@ -2121,6 +2489,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             icon_type: normalizeStoredHotspotIconType(h.icon_type),
             icon_color: h.icon_color,
             hide_icon: Boolean(h.hide_icon),
+            custom_config: h.custom_config || null,
           };
         });
 
@@ -2170,6 +2539,298 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     fetchPontosDestino();
   }, [pontoId]);
+
+  useEffect(() => {
+    setUserCustomMenuOpen(false);
+    setUserCustomHotspot(null);
+  }, [activePontoId]);
+
+  useEffect(() => {
+    if (canManageHotspots) {
+      setMyHotspotCustomizations({});
+      return;
+    }
+
+    let localParsed = {};
+    try {
+      const raw = localStorage.getItem(userCustomStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          localParsed = parsed;
+        }
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+
+    setMyHotspotCustomizations(localParsed);
+
+    const token = typeof window !== "undefined" ? (localStorage.getItem("authToken") || "") : "";
+    if (!token) return;
+    const idPonto = Number(activePontoId || pontoId);
+    if (!Number.isInteger(idPonto) || idPonto <= 0) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const url = API_BASE
+          ? `${API_BASE}/hotspot/custom/me?id_ponto=${encodeURIComponent(String(idPonto))}`
+          : `/hotspot/custom/me?id_ponto=${encodeURIComponent(String(idPonto))}`;
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.success) {
+          return;
+        }
+
+        const data = payload?.data;
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          return;
+        }
+
+        if (cancelled) return;
+        try {
+          localStorage.setItem(userCustomStorageKey, JSON.stringify(data));
+        } catch {
+          // ignore storage errors
+        }
+        setMyHotspotCustomizations(data);
+      } catch {
+        // ignore network errors
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [API_BASE, activePontoId, canManageHotspots, pontoId, userCustomStorageKey]);
+
+  useEffect(() => {
+    return () => {
+      if (userCustomSyncTimerRef.current) {
+        window.clearTimeout(userCustomSyncTimerRef.current);
+        userCustomSyncTimerRef.current = null;
+      }
+      userCustomSyncPendingRef.current = null;
+    };
+  }, []);
+
+  const canUserEditContentForHotspot = (hotspot) => {
+    const tipo = String(hotspot?.tipo || "");
+    return ["texto", "link", "audio", "audioespacial", "video", "imagem", "imagem4p"].includes(tipo);
+  };
+
+  const openUserCustomizationMenu = (hotspot) => {
+    if (canManageHotspots) return;
+    if (!hotspot) return;
+
+    const cfg = normalizeHotspotCustomConfig(hotspot.custom_config);
+    const hasAny = cfg.enabled && (
+      Boolean(cfg.allow_content?.enabled)
+      || Boolean(cfg.allow_position?.enabled)
+      || Boolean(cfg.allow_transform?.enabled)
+    );
+    if (!hasAny) return;
+
+    const existing = normalizeUserOverrides(myHotspotCustomizations?.[hotspot.id]);
+    setUserCustomHotspot(hotspot);
+    setUserCustomDraft({
+      dx: typeof existing.dx === 'number' ? existing.dx : 0,
+      dy: typeof existing.dy === 'number' ? existing.dy : 0,
+      dz: typeof existing.dz === 'number' ? existing.dz : 0,
+      scale: typeof existing.scale === 'number' ? existing.scale : toFiniteNumber(hotspot.scale, 1),
+      rot_yaw: typeof existing.rot_yaw === 'number' ? existing.rot_yaw : toFiniteNumber(hotspot.rot_yaw, 0),
+      rot_pitch: typeof existing.rot_pitch === 'number' ? existing.rot_pitch : toFiniteNumber(hotspot.rot_pitch, 0),
+      conteudo: typeof existing.conteudo === 'string' ? existing.conteudo : String(hotspot.conteudo || ""),
+    });
+    setUserCustomDraftFileName("");
+    setUserCustomMenuOpen(true);
+  };
+
+  const persistUserCustomization = async (hotspot, overrides) => {
+    const nextStore = { ...(myHotspotCustomizations && typeof myHotspotCustomizations === 'object' ? myHotspotCustomizations : {}) };
+    if (overrides && Object.keys(overrides).length > 0) {
+      nextStore[hotspot.id] = overrides;
+    } else {
+      delete nextStore[hotspot.id];
+    }
+
+    try {
+      localStorage.setItem(userCustomStorageKey, JSON.stringify(nextStore));
+      setMyHotspotCustomizations(nextStore);
+
+      const token = typeof window !== "undefined" ? (localStorage.getItem("authToken") || "") : "";
+      if (token) {
+        userCustomSyncPendingRef.current = {
+          hotspotId: hotspot.id,
+          overrides: normalizeUserOverrides(overrides),
+          token,
+        };
+
+        if (userCustomSyncTimerRef.current) {
+          window.clearTimeout(userCustomSyncTimerRef.current);
+        }
+
+        userCustomSyncTimerRef.current = window.setTimeout(async () => {
+          const pending = userCustomSyncPendingRef.current;
+          userCustomSyncPendingRef.current = null;
+          userCustomSyncTimerRef.current = null;
+          if (!pending) return;
+
+          try {
+            const url = API_BASE
+              ? `${API_BASE}/hotspot/${encodeURIComponent(String(pending.hotspotId))}/custom/me`
+              : `/hotspot/${encodeURIComponent(String(pending.hotspotId))}/custom/me`;
+            const response = await fetch(url, {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${pending.token}`,
+              },
+              body: JSON.stringify({ overrides: pending.overrides }),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok || !payload?.success) {
+              console.warn("Falha ao sincronizar personalização do hotspot.", payload?.message || response.statusText);
+            }
+          } catch (error) {
+            console.warn("Falha ao sincronizar personalização do hotspot.", error);
+          }
+        }, 600);
+      }
+
+      return normalizeUserOverrides(overrides);
+    } catch (error) {
+      if (error instanceof Error && error.name === "QuotaExceededError") {
+        alert("Espaço de armazenamento cheio! Tente uma imagem menor ou mais comprimida.");
+        throw new Error("Armazenamento local cheio");
+      }
+      throw error;
+    }
+  };
+
+  const saveUserCustomization = async () => {
+    if (!userCustomHotspot) return;
+    const hotspot = userCustomHotspot;
+    const cfg = normalizeHotspotCustomConfig(hotspot.custom_config);
+    if (!cfg.enabled) return;
+
+    const eps = 1e-4;
+    const baseScale = toFiniteNumber(hotspot.scale, 1);
+    const baseYaw = toFiniteNumber(hotspot.rot_yaw, 0);
+    const basePitch = toFiniteNumber(hotspot.rot_pitch, 0);
+    const baseConteudo = String(hotspot.conteudo || "");
+
+    let overrides = {};
+    if (cfg.allow_position.enabled) {
+      const dx = toFiniteNumber(userCustomDraft.dx, 0);
+      const dy = toFiniteNumber(userCustomDraft.dy, 0);
+      const dz = toFiniteNumber(userCustomDraft.dz, 0);
+      if (Math.abs(dx) > eps) overrides.dx = dx;
+      if (Math.abs(dy) > eps) overrides.dy = dy;
+      if (Math.abs(dz) > eps) overrides.dz = dz;
+    }
+
+    if (cfg.allow_transform.enabled) {
+      const scale = toFiniteNumber(userCustomDraft.scale, baseScale);
+      const yaw = toFiniteNumber(userCustomDraft.rot_yaw, baseYaw);
+      const pitch = toFiniteNumber(userCustomDraft.rot_pitch, basePitch);
+      if (Math.abs(scale - baseScale) > eps) overrides.scale = scale;
+      if (Math.abs(yaw - baseYaw) > eps) overrides.rot_yaw = yaw;
+      if (Math.abs(pitch - basePitch) > eps) overrides.rot_pitch = pitch;
+    }
+
+    if (cfg.allow_content.enabled && canUserEditContentForHotspot(hotspot)) {
+      const conteudo = String(userCustomDraft.conteudo || "");
+      if (conteudo !== baseConteudo) overrides.conteudo = conteudo;
+    }
+
+    overrides = filterOverridesByCustomConfig(normalizeUserOverrides(overrides), cfg, hotspot?.tipo);
+
+    setUserCustomSaving(true);
+    try {
+      await persistUserCustomization(hotspot, overrides);
+    } finally {
+      setUserCustomSaving(false);
+    }
+  };
+
+  const resetUserCustomization = async () => {
+    if (!userCustomHotspot) return;
+    const hotspot = userCustomHotspot;
+    const cfg = normalizeHotspotCustomConfig(hotspot.custom_config);
+    if (!cfg.enabled) return;
+
+    setUserCustomSaving(true);
+    try {
+      // Se for imagem4p, deletar a imagem customizada antes de repor
+      if (String(hotspot.tipo || "") === "imagem4p" && cfg.allow_content.enabled) {
+        const draftRaw = String(userCustomDraft.conteudo || "");
+        const draftPayload = decodeImage4pValue(draftRaw);
+        const customSrc = draftPayload?.src || "";
+        
+        const officialPayload = decodeImage4pValue(String(hotspot.conteudo || ""));
+        const officialSrc = String(officialPayload?.src || "");
+        const customSrcRel = relativePathFromUploadsUrl(customSrc);
+        const officialSrcRel = relativePathFromUploadsUrl(officialSrc);
+        const isPrimaryImage = Boolean(customSrcRel && officialSrcRel && customSrcRel === officialSrcRel);
+
+        if (customSrc && customSrc.includes("/uploads/") && !isPrimaryImage) {
+          const customPath = relativePathFromUploadsUrl(customSrc);
+          if (customPath && customPath.trim()) {
+            try {
+              const token = localStorage.getItem("authToken") || "";
+              const deleteUrl = API_BASE
+                ? `${API_BASE}/media/item?path=${encodeURIComponent(customPath)}`
+                : `/media/item?path=${encodeURIComponent(customPath)}`;
+              
+              console.log("🗑️ Deletando imagem customizada ao repor:", { customPath, deleteUrl });
+              
+              const deleteResponse = await fetch(deleteUrl, {
+                method: "DELETE",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
+              });
+              
+              if (!deleteResponse.ok) {
+                console.warn("⚠️ Falha ao deletar imagem customizada:", deleteResponse.status, deleteResponse.statusText);
+              } else {
+                console.log("✅ Imagem customizada deletada ao repor");
+              }
+            } catch (deleteError) {
+              console.warn("⚠️ Erro ao deletar imagem customizada:", deleteError);
+            }
+          }
+        } else if (isPrimaryImage && !isAdminUser) {
+          console.log("🔒 Imagem principal de hotspot imagem4p protegida: delete ignorado no repor");
+        }
+      }
+
+      await persistUserCustomization(hotspot, {});
+      setUserCustomDraft({
+        dx: 0,
+        dy: 0,
+        dz: 0,
+        scale: toFiniteNumber(hotspot.scale, 1),
+        rot_yaw: toFiniteNumber(hotspot.rot_yaw, 0),
+        rot_pitch: toFiniteNumber(hotspot.rot_pitch, 0),
+        conteudo: String(hotspot.conteudo || ""),
+      });
+      setUserCustomDraftFileName("");
+    } finally {
+      setUserCustomSaving(false);
+    }
+  };
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -2243,6 +2904,19 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         if (hotspot.tipo === "modelo3d_inspect" && !editDialogOpen) {
           setInspectModeHotspotId((prev) => prev === hotspot.id ? null : hotspot.id);
           return;
+        }
+
+        if (!showEditContextMenu && !editDialogOpen && btn === 0) {
+          const cfg = normalizeHotspotCustomConfig(hotspot.custom_config);
+          const hasAny = cfg.enabled && (
+            Boolean(cfg.allow_content?.enabled)
+            || Boolean(cfg.allow_position?.enabled)
+            || Boolean(cfg.allow_transform?.enabled)
+          );
+          if (hasAny) {
+            openUserCustomizationMenu(hotspot);
+            return;
+          }
         }
 
         if (showEditContextMenu) {
@@ -2633,6 +3307,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           icon_type: normalizeStoredHotspotIconType(hotspotCriado.icon_type || "default"),
           icon_color: hotspotCriado.icon_color || "#06b6d4",
           hide_icon: Boolean(hotspotCriado.hide_icon),
+          custom_config: hotspotCriado.custom_config || null,
         };
 
         setHotspots((prev) => {
@@ -2650,6 +3325,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditPlacement(String(hotspotEditavel.placement || ""));
         setEditStickToGround(String(hotspotEditavel.placement || "") === "ground");
         setEditHideIcon(Boolean(hotspotEditavel.hide_icon));
+        setEditCustomConfig(normalizeHotspotCustomConfig(hotspotEditavel.custom_config));
         setPositionAndAnglesFromXYZ(hotspotEditavel.x, hotspotEditavel.y, hotspotEditavel.z);
         setEditPontoDestino(hotspotEditavel.id_ponto_destino || "");
         setEditNavigationSelection(null);
@@ -2998,6 +3674,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           y: finalY,
           z: finalZ,
           hide_icon: Boolean(editHideIcon),
+          custom_config: editCustomConfig?.enabled ? editCustomConfig : { enabled: false },
         }),
       });
 
@@ -3027,6 +3704,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         icon_type: normalizeStoredHotspotIconType(selectedHotspot.icon_type || "default"),
         icon_color: selectedHotspot.icon_color || "#06b6d4",
         hide_icon: Boolean(editHideIcon),
+        custom_config: editCustomConfig?.enabled ? editCustomConfig : { enabled: false },
       };
 
       setHotspots((prev) => {
@@ -3145,6 +3823,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         <a-entity
           key={`warp-${overlay.id}`}
           warp-image={`src: ${overlay.src}; points: ${encodeURIComponent(JSON.stringify(overlay.points || []))}; opacity: ${Number.isFinite(Number(overlay.opacity)) ? overlay.opacity : 1}; brightness: ${Number.isFinite(Number(overlay.brightness)) ? overlay.brightness : 1}; inset: ${Number.isFinite(Number(overlay.inset)) ? overlay.inset : 0.6}; rotateDeg: ${Number.isFinite(Number(overlay.rotateDeg)) ? overlay.rotateDeg : 0}; flipX: ${overlay.flipX ? true : false}; flipY: ${overlay.flipY ? true : false}; depthMode: ${overlay.depthMode === "occlusion-mask" ? "occlusion-mask" : "none"}; occlusionMaskPoints: ${encodeURIComponent(JSON.stringify(overlay.occlusionMaskPoints || []))}; occlusionMaskInset: ${Number.isFinite(Number(overlay.occlusionMaskInset)) ? overlay.occlusionMaskInset : 0}; doubleSided: true`}
+          data-warp-src={overlay.src}
         />
       ))}
 
@@ -3172,7 +3851,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
 
 
-      {previewHotspots.map((pos) => (
+      {effectiveHotspots.map((pos) => (
         <a-entity
           key={pos.id}
           className="hotspot-root"
@@ -3627,12 +4306,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       : (selectedHotspot.id_ponto_destino ? "point" : (selectedHotspot.navigation_file_path ? "file" : "file"))
                   );
                   setEditHideIcon(Boolean(selectedHotspot.hide_icon));
+                  setEditCustomConfig(normalizeHotspotCustomConfig(selectedHotspot.custom_config));
                   setEditStep("type");
                   setEditDialogOpen(true);
                 }
               } else if (value === "delete") {
                 deleteHotspot(selectedHotspot.id);
               } else if (value === "edit-dome") {
+                setDomeEditStep("guides");
                 setDomeDialogOpen(true);
               }
             }}
@@ -3702,129 +4383,160 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         nonModal
         closeOnInteractOutside={false}
         overlayClassName="bg-transparent pointer-events-none"
-        contentClassName="!left-auto !top-auto !right-4 !bottom-4 !translate-x-0 !translate-y-0 !w-[380px] max-w-[92vw] max-h-[78vh] p-4"
+        contentClassName="!left-auto !top-auto !right-4 !bottom-4 !translate-x-0 !translate-y-0 !w-[520px] max-w-[92vw] max-h-[78vh] p-4"
+        bodyClassName="max-h-[58vh] pr-1"
       >
         <div className="flex flex-col gap-2 mt-2">
           <label className="text-sm font-medium">Vista: {currentViewPath || "vista inicial"}</label>
 
-          <div className="mt-2 rounded border border-black/10 p-2">
-            <div className="text-xs font-semibold text-black/70 mb-2">Guias de Alinhamento</div>
-            <label className="inline-flex items-center gap-2 text-sm">
+          <div className="flex gap-1 mb-1 border-b border-black/10 overflow-x-auto">
+            {[
+              { value: "guides", label: "Guias" },
+              { value: "alignment", label: "Alinhamento" },
+              { value: "mirror", label: "Espelho" },
+            ].map((step) => (
+              <button
+                key={step.value}
+                type="button"
+                onClick={() => setDomeEditStep(step.value)}
+                className={`px-3 py-2 text-xs font-medium whitespace-nowrap rounded-t border-b-2 transition-colors ${domeEditStep === step.value
+                  ? "border-b-black text-black"
+                  : "border-b-transparent text-neutral-600 hover:text-black"
+                  }`}
+              >
+                {step.label}
+              </button>
+            ))}
+          </div>
+
+          {domeEditStep === "guides" && (
+            <div className="mt-2 rounded border border-black/10 p-2">
+              <div className="text-xs font-semibold text-black/70 mb-2">Guias de Alinhamento</div>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showAlignmentGuides}
+                  onChange={(e) => setShowAlignmentGuides(Boolean(e.target.checked))}
+                />
+                Mostrar linhas-guia no ecrã
+              </label>
+
+              <label className="text-sm font-medium mt-2 block">
+                Opacidade das guias: {alignmentGuidesOpacity.toFixed(2)}
+              </label>
               <input
-                type="checkbox"
-                checked={showAlignmentGuides}
-                onChange={(e) => setShowAlignmentGuides(Boolean(e.target.checked))}
+                className="w-full accent-black"
+                type="range"
+                min="0.2"
+                max="1"
+                step="0.01"
+                value={alignmentGuidesOpacity}
+                onChange={(e) => {
+                  const nextOpacity = parseFloat(e.target.value);
+                  if (!Number.isFinite(nextOpacity)) return;
+                  setAlignmentGuidesOpacity(Math.max(0.2, Math.min(1, nextOpacity)));
+                }}
               />
-              Mostrar linhas-guia no ecrã
-            </label>
-
-            <label className="text-sm font-medium mt-2 block">
-              Opacidade das guias: {alignmentGuidesOpacity.toFixed(2)}
-            </label>
-            <input
-              className="w-full accent-black"
-              type="range"
-              min="0.2"
-              max="1"
-              step="0.01"
-              value={alignmentGuidesOpacity}
-              onChange={(e) => {
-                const nextOpacity = parseFloat(e.target.value);
-                if (!Number.isFinite(nextOpacity)) return;
-                setAlignmentGuidesOpacity(Math.max(0.2, Math.min(1, nextOpacity)));
-              }}
-            />
-          </div>
-
-          <div className="mt-2 rounded border border-black/10 p-2">
-            <div className="text-xs font-semibold text-black/70 mb-2">Alinhamento do Panorama</div>
-            <div className="text-xs text-black/60 mb-2">
-              O alinhamento é relativo à orientação atual da câmara quando este painel é aberto.
             </div>
+          )}
+
+          {domeEditStep === "alignment" && (
+            <div className="mt-2 rounded border border-black/10 p-2">
+              <div className="text-xs font-semibold text-black/70 mb-2">Alinhamento do Panorama</div>
+              <div className="text-xs text-black/60 mb-2">
+                O alinhamento é relativo à orientação atual da câmara quando este painel é aberto.
+              </div>
 
 
 
-            <label className="text-sm font-medium">Alinhamento (Roll): {Math.round(domeRotationZ)}°</label>
-            <input
-              className="w-full accent-black"
-              type="range"
-              min="-360"
-              max="360"
-              step="1"
-              value={domeRotationZ}
-              onChange={(e) => {
-                const nextRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRotation)) return;
-                persistDomeSettingsForView({ rotationZ: nextRotation });
-              }}
-            />
-            <input
-              className="w-full rounded border border-black/20 px-2 py-1 text-sm"
-              type="number"
-              step="1"
-              min="-360"
-              max="360"
-              value={domeRotationZ}
-              onChange={(e) => {
-                const nextRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRotation)) return;
-                persistDomeSettingsForView({ rotationZ: nextRotation });
-              }}
-            />
+              <label className="text-sm font-medium">Alinhamento (Roll): {Math.round(domeRotationZ)}°</label>
+              <input
+                className="w-full accent-black"
+                type="range"
+                min="-360"
+                max="360"
+                step="1"
+                value={domeRotationZ}
+                onChange={(e) => {
+                  const nextRotation = parseFloat(e.target.value);
+                  if (!Number.isFinite(nextRotation)) return;
+                  persistDomeSettingsForView({ rotationZ: nextRotation });
+                }}
+              />
+              <input
+                className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+                type="number"
+                step="1"
+                min="-360"
+                max="360"
+                value={domeRotationZ}
+                onChange={(e) => {
+                  const nextRotation = parseFloat(e.target.value);
+                  if (!Number.isFinite(nextRotation)) return;
+                  persistDomeSettingsForView({ rotationZ: nextRotation });
+                }}
+              />
 
-            <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw relativo): {Math.round(relativeDomeRotationY)}°</label>
-            <input
-              className="w-full accent-black"
-              type="range"
-              min="-360"
-              max="360"
-              step="1"
-              value={relativeDomeRotationY}
-              onChange={(e) => {
-                const nextRelativeRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRelativeRotation)) return;
-                persistDomeSettingsForView({
-                  rotationY: nextRelativeRotation + (Number(cameraAlignmentBase.yaw) || 0),
-                });
-              }}
-            />
+              <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw relativo): {Math.round(relativeDomeRotationY)}°</label>
+              <input
+                className="w-full accent-black"
+                type="range"
+                min="-360"
+                max="360"
+                step="1"
+                value={relativeDomeRotationY}
+                onChange={(e) => {
+                  const nextRelativeRotation = parseFloat(e.target.value);
+                  if (!Number.isFinite(nextRelativeRotation)) return;
+                  persistDomeSettingsForView({
+                    rotationY: nextRelativeRotation + (Number(cameraAlignmentBase.yaw) || 0),
+                  });
+                }}
+              />
 
-            <label className="text-sm font-medium">Rotacao Vertical (Pitch relativo): {Math.round(relativeDomeRotationX)}°</label>
-            <input
-              className="w-full accent-black"
-              type="range"
-              min="-180"
-              max="180"
-              step="1"
-              value={relativeDomeRotationX}
-              onChange={(e) => {
-                const nextRelativeRotation = parseFloat(e.target.value);
-                if (!Number.isFinite(nextRelativeRotation)) return;
-                persistDomeSettingsForView({
-                  rotationX: nextRelativeRotation + (Number(cameraAlignmentBase.pitch) || 0),
-                });
-              }}
-            />
+              <label className="text-sm font-medium">Rotacao Vertical (Pitch relativo): {Math.round(relativeDomeRotationX)}°</label>
+              <input
+                className="w-full accent-black"
+                type="range"
+                min="-180"
+                max="180"
+                step="1"
+                value={relativeDomeRotationX}
+                onChange={(e) => {
+                  const nextRelativeRotation = parseFloat(e.target.value);
+                  if (!Number.isFinite(nextRelativeRotation)) return;
+                  persistDomeSettingsForView({
+                    rotationX: nextRelativeRotation + (Number(cameraAlignmentBase.pitch) || 0),
+                  });
+                }}
+              />
 
-            <div className="mt-2 grid grid-cols-1 gap-2">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={domeMirrorX}
-                  onChange={(e) => persistDomeSettingsForView({ mirrorX: Boolean(e.target.checked) })}
-                />
-                Espelhar horizontalmente
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={domeMirrorY}
-                  onChange={(e) => persistDomeSettingsForView({ mirrorY: Boolean(e.target.checked) })}
-                />
-                Espelhar verticalmente
-              </label>
             </div>
-          </div>
+          )}
+
+          {domeEditStep === "mirror" && (
+            <div className="mt-2 rounded border border-black/10 p-2">
+              <div className="text-xs font-semibold text-black/70 mb-2">Espelhamento do Panorama</div>
+              <div className="mt-1 grid grid-cols-1 gap-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={domeMirrorX}
+                    onChange={(e) => persistDomeSettingsForView({ mirrorX: Boolean(e.target.checked) })}
+                  />
+                  Espelhar horizontalmente
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={domeMirrorY}
+                    onChange={(e) => persistDomeSettingsForView({ mirrorY: Boolean(e.target.checked) })}
+                  />
+                  Espelhar verticalmente
+                </label>
+              </div>
+            </div>
+          )}
         </div>
       </CustomDialog>
       <CustomDialog
@@ -3844,7 +4556,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           <div className="flex flex-col gap-2 mt-2">
             {/* Tabs/Steps Navigation */}
             <div className="flex gap-1 mb-3 border-b border-black/10 overflow-x-auto">
-              {["type", "content", "position", "transform", "styling", editTipo === "navegacao" ? "navigation" : null].filter(Boolean).map((step) => (
+              {["type", "content", "position", "transform", "styling", "custom", editTipo === "navegacao" ? "navigation" : null].filter(Boolean).map((step) => (
                 <button
                   key={step}
                   type="button"
@@ -3859,6 +4571,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   {step === "position" && "Posição"}
                   {step === "transform" && "Transformação"}
                   {step === "styling" && "Estilo"}
+                  {step === "custom" && "Customizável"}
                   {step === "navigation" && "Navegação"}
                 </button>
               ))}
@@ -4288,22 +5001,36 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             {/* Step 3: Position */}
             {editStep === "position" && (
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium mt-2">Posição X: {(Number(editX) || 0).toFixed(1)}</label>
-                <input
-                  type="range"
-                  min={positionSliderMin}
-                  max={positionSliderMax}
-                  step="0.1"
-                  value={Number(editX) || 0}
-                  onChange={(e) => {
-                    const next = parseFloat(e.target.value);
-                    if (!Number.isFinite(next)) return;
-                    setPositionAndAnglesFromXYZ(next, editY, editZ);
-                  }}
-                  className="w-full accent-black"
-                />
+                <div className="grid grid-cols-3 gap-2">
+                  <DragNumberInput
+                    label="X"
+                    value={Number(editX) || 0}
+                    onChange={(next) => setPositionAndAnglesFromXYZ(next, editY, editZ)}
+                    step={0.1}
+                  />
+                  <DragNumberInput
+                    label={editStickToGround ? "Y (plano)" : "Y"}
+                    value={editStickToGround ? (Number(editZ) || 0) : (Number(editY) || 0)}
+                    onChange={(next) => {
+                      if (editStickToGround) {
+                        setPositionAndAnglesFromXYZ(editX, floorY, next);
+                        return;
+                      }
+                      setPositionAndAnglesFromXYZ(editX, next, editZ);
+                    }}
+                    step={0.1}
+                  />
+                  {!editStickToGround && (
+                    <DragNumberInput
+                      label="Z"
+                      value={Number(editZ) || 0}
+                      onChange={(next) => setPositionAndAnglesFromXYZ(editX, editY, next)}
+                      step={0.1}
+                    />
+                  )}
+                </div>
 
-                <label className="inline-flex items-center gap-2 text-sm font-medium mt-2">
+                <label className="inline-flex items-center gap-2 text-xs font-medium">
                   <input
                     type="checkbox"
                     checked={editStickToGround}
@@ -4322,56 +5049,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 {editStickToGround && (
                   <div className="rounded border border-black/10 p-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-neutral-700">Clica no plano para posicionar rapidamente.</span>
+                      <span className="text-xs text-neutral-700">Clica no plano para posicionar.</span>
                       <button
                         type="button"
                         onClick={() => setIsPickingGroundPosition((prev) => !prev)}
                         className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
                       >
-                        {isPickingGroundPosition ? "Parar colocacao" : "Colocar no plano"}
+                        {isPickingGroundPosition ? "Parar" : "Colocar"}
                       </button>
                     </div>
                   </div>
-                )}
-
-                <label className="text-sm font-medium">
-                  {editStickToGround ? "Posição Y (plano):" : "Posição Y:"} {editStickToGround ? (Number(editZ) || 0).toFixed(1) : (Number(editY) || 0).toFixed(1)}
-                </label>
-                <input
-                  type="range"
-                  min={positionSliderMin}
-                  max={positionSliderMax}
-                  step="0.1"
-                  value={editStickToGround ? (Number(editZ) || 0) : (Number(editY) || 0)}
-                  onChange={(e) => {
-                    const next = parseFloat(e.target.value);
-                    if (!Number.isFinite(next)) return;
-                    if (editStickToGround) {
-                      setPositionAndAnglesFromXYZ(editX, floorY, next);
-                      return;
-                    }
-                    setPositionAndAnglesFromXYZ(editX, next, editZ);
-                  }}
-                  className="w-full accent-black"
-                />
-
-                {!editStickToGround && (
-                  <>
-                    <label className="text-sm font-medium">Posição Z: {(Number(editZ) || 0).toFixed(1)}</label>
-                    <input
-                      type="range"
-                      min={positionSliderMin}
-                      max={positionSliderMax}
-                      step="0.1"
-                      value={Number(editZ) || 0}
-                      onChange={(e) => {
-                        const next = parseFloat(e.target.value);
-                        if (!Number.isFinite(next)) return;
-                        setPositionAndAnglesFromXYZ(editX, editY, next);
-                      }}
-                      className="w-full accent-black"
-                    />
-                  </>
                 )}
               </div>
             )}
@@ -4379,77 +5066,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             {/* Step 4: Transform */}
             {editStep === "transform" && (
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium mt-2">Rotação horizontal (Yaw): {Math.round(editYaw)}°</label>
-                <input
-                  type="range"
-                  min="-180"
-                  max="180"
-                  step="1"
-                  value={editYaw}
-                  onChange={(e) => {
-                    const nextYaw = parseFloat(e.target.value);
-                    if (!Number.isFinite(nextYaw)) return;
-                    setEditYaw(nextYaw);
-                  }}
-                  className="w-full accent-black"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <DragNumberInput
+                    label="Inclinação (°)"
+                    value={Math.round(editPitch)}
+                    onChange={(next) => setEditPitch(next)}
+                    step={1}
+                  />
+                  <DragNumberInput
+                    label="Guinada (°)"
+                    value={Math.round(editYaw)}
+                    onChange={(next) => setEditYaw(next)}
+                    step={1}
+                  />
+                </div>
 
-                <label className="text-sm font-medium">Rotação vertical (Pitch): {Math.round(editPitch)}°</label>
-                <input
-                  type="range"
-                  min="-80"
-                  max="80"
-                  step="1"
-                  value={editPitch}
-                  onChange={(e) => {
-                    const nextPitch = parseFloat(e.target.value);
-                    if (!Number.isFinite(nextPitch)) return;
-                    setEditPitch(nextPitch);
-                  }}
-                  className="w-full accent-black"
-                />
-
-                <label className="text-sm font-medium">Distância ao centro: {Math.round(editRadius)}</label>
-                <input
-                  type="range"
-                  min="100"
-                  max={domeRadius}
-                  step="1"
-                  value={editRadius}
-                  onChange={(e) => {
-                    const nextRadius = parseFloat(e.target.value);
-                    if (!Number.isFinite(nextRadius)) return;
-                    setPositionFromRadius(nextRadius);
-                  }}
-                  className="w-full accent-black"
-                />
-
-                <label className="text-sm font-medium">Escala do hotspot: {(Number(editScale) || 1).toFixed(2)}x</label>
-                <input
-                  type="range"
-                  min="0.4"
-                  max={Math.max(20, Math.ceil(Number(editScale) || 1))}
-                  step="0.05"
-                  value={Number(editScale) || 1}
-                  onChange={(e) => {
-                    const nextScale = parseFloat(e.target.value);
-                    if (!Number.isFinite(nextScale)) return;
-                    setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
-                  }}
-                  className="w-full accent-black"
-                />
-                <input
-                  type="number"
-                  min="0.4"
-                  step="0.05"
-                  value={(Number(editScale) || 1).toFixed(2)}
-                  onChange={(e) => {
-                    const nextScale = parseFloat(e.target.value);
-                    if (!Number.isFinite(nextScale)) return;
-                    setEditScale(Math.max(HOTSPOT_SCALE_MIN, nextScale));
-                  }}
-                  className="border rounded px-2 py-1 dark:bg-black"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <DragNumberInput
+                    label="Raio (centro)"
+                    value={Math.round(editRadius)}
+                    onChange={(next) => setPositionFromRadius(next)}
+                    step={1}
+                  />
+                  <DragNumberInput
+                    label="Escala"
+                    value={(Number(editScale) || 1).toFixed(2)}
+                    onChange={(next) => setEditScale(Math.max(HOTSPOT_SCALE_MIN, next))}
+                    step={0.05}
+                  />
+                </div>
               </div>
             )}
 
@@ -4465,6 +5110,188 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   />
                   Ocultar ícone de hotspot para utilizadores
                 </label>
+              </div>
+            )}
+
+            {/* Step: Custom (per-user overrides) */}
+            {editStep === "custom" && (
+              <div className="flex flex-col gap-3">
+                <label className="inline-flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editCustomConfig?.enabled)}
+                    onChange={(e) => setEditCustomConfig((prev) => ({
+                      ...normalizeHotspotCustomConfig(prev),
+                      enabled: Boolean(e.target.checked),
+                    }))}
+                    className="accent-black"
+                  />
+                  Permitir personalização pelo utilizador (só para ele)
+                </label>
+
+                <div className="rounded border border-black/10 p-2">
+                  <div className="text-xs font-semibold text-black/70 mb-2">Opções permitidas</div>
+
+                  <div className="grid grid-cols-1 gap-2">
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editCustomConfig?.allow_content?.enabled)}
+                        onChange={(e) => setEditCustomConfig((prev) => {
+                          const base = normalizeHotspotCustomConfig(prev);
+                          return {
+                            ...base,
+                            allow_content: {
+                              ...base.allow_content,
+                              enabled: Boolean(e.target.checked),
+                            },
+                          };
+                        })}
+                        className="accent-black"
+                        disabled={!editCustomConfig?.enabled}
+                      />
+                      Conteúdo (texto/URL)
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-neutral-700">
+                        Máx. chars
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={Number(editCustomConfig?.allow_content?.maxLength) || 0}
+                          onChange={(e) => {
+                            const next = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                            setEditCustomConfig((prev) => {
+                              const base = normalizeHotspotCustomConfig(prev);
+                              return {
+                                ...base,
+                                allow_content: { ...base.allow_content, maxLength: next },
+                              };
+                            });
+                          }}
+                          className="mt-1 w-full rounded border border-black/20 px-2 py-1 text-sm"
+                          disabled={!editCustomConfig?.enabled}
+                        />
+                      </label>
+                    </div>
+
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editCustomConfig?.allow_position?.enabled)}
+                        onChange={(e) => setEditCustomConfig((prev) => {
+                          const base = normalizeHotspotCustomConfig(prev);
+                          return {
+                            ...base,
+                            allow_position: {
+                              ...base.allow_position,
+                              enabled: Boolean(e.target.checked),
+                            },
+                          };
+                        })}
+                        className="accent-black"
+                        disabled={!editCustomConfig?.enabled}
+                      />
+                      Posição (dx/dy/dz)
+                    </label>
+                    <label className="text-xs text-neutral-700">
+                      Range (±)
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={Number(editCustomConfig?.allow_position?.range) || 0}
+                        onChange={(e) => {
+                          const next = Math.max(0, Number(e.target.value) || 0);
+                          setEditCustomConfig((prev) => {
+                            const base = normalizeHotspotCustomConfig(prev);
+                            return {
+                              ...base,
+                              allow_position: { ...base.allow_position, range: next },
+                            };
+                          });
+                        }}
+                        className="mt-1 w-full rounded border border-black/20 px-2 py-1 text-sm"
+                        disabled={!editCustomConfig?.enabled}
+                      />
+                    </label>
+
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editCustomConfig?.allow_transform?.enabled)}
+                        onChange={(e) => setEditCustomConfig((prev) => {
+                          const base = normalizeHotspotCustomConfig(prev);
+                          return {
+                            ...base,
+                            allow_transform: {
+                              ...base.allow_transform,
+                              enabled: Boolean(e.target.checked),
+                            },
+                          };
+                        })}
+                        className="accent-black"
+                        disabled={!editCustomConfig?.enabled}
+                      />
+                      Transformação (escala/rotação)
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-neutral-700">
+                        Escala min
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={Number(editCustomConfig?.allow_transform?.scale?.min) || HOTSPOT_SCALE_MIN}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setEditCustomConfig((prev) => {
+                              const base = normalizeHotspotCustomConfig(prev);
+                              return {
+                                ...base,
+                                allow_transform: {
+                                  ...base.allow_transform,
+                                  scale: { ...base.allow_transform.scale, min: next },
+                                },
+                              };
+                            });
+                          }}
+                          className="mt-1 w-full rounded border border-black/20 px-2 py-1 text-sm"
+                          disabled={!editCustomConfig?.enabled}
+                        />
+                      </label>
+
+                      <label className="text-xs text-neutral-700">
+                        Escala max
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={Number(editCustomConfig?.allow_transform?.scale?.max) || 0}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setEditCustomConfig((prev) => {
+                              const base = normalizeHotspotCustomConfig(prev);
+                              return {
+                                ...base,
+                                allow_transform: {
+                                  ...base.allow_transform,
+                                  scale: { ...base.allow_transform.scale, max: next },
+                                },
+                              };
+                            });
+                          }}
+                          className="mt-1 w-full rounded border border-black/20 px-2 py-1 text-sm"
+                          disabled={!editCustomConfig?.enabled}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-[11px] text-neutral-600">
+                    Nota: estas mudanças são guardadas apenas para o próprio utilizador (não alteram o hotspot global).
+                  </div>
+                </div>
               </div>
             )}
 
@@ -4571,6 +5398,301 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           </div>
         )}
       </CustomDialog>
+
+      {userCustomMenuOpen && userCustomHotspot && !canManageHotspots && (
+        <div className="fixed bottom-4 left-1/2 z-50 w-[560px] max-w-[94vw] -translate-x-1/2 rounded-xl border border-black/10 bg-white/90 p-3 shadow-xl backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-black">Customizável</div>
+              <div className="text-[11px] text-neutral-600">
+                Hotspot #{userCustomHotspot.id} • {String(userCustomHotspot.tipo || "")}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setUserCustomMenuOpen(false);
+                  setUserCustomHotspot(null);
+                }}
+                className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                disabled={userCustomSaving}
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={resetUserCustomization}
+                className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                disabled={userCustomSaving}
+              >
+                Repor
+              </button>
+              <button
+                type="button"
+                onClick={saveUserCustomization}
+                className="rounded bg-black px-3 py-1 text-xs font-semibold text-white hover:bg-black/90 disabled:opacity-50"
+                disabled={userCustomSaving}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+
+          {(() => {
+            const cfg = normalizeHotspotCustomConfig(userCustomHotspot.custom_config);
+            return (
+              <div className="mt-3 flex flex-col gap-3">
+                {cfg.allow_content.enabled && canUserEditContentForHotspot(userCustomHotspot) && (
+                  String(userCustomHotspot.tipo || "") === "imagem4p"
+                    ? (() => {
+                      const draftRaw = String(userCustomDraft.conteudo || "");
+                      const baseRaw = String(userCustomHotspot.conteudo || "");
+                      const payload = decodeImage4pValue(draftRaw) || decodeImage4pValue(baseRaw) || {
+                        src: "",
+                        points: [],
+                        opacity: 1,
+                        brightness: 1,
+                        inset: 0.6,
+                        rotateDeg: 0,
+                        flipX: false,
+                        flipY: false,
+                        depthMode: "none",
+                        occlusionMaskPoints: [],
+                        occlusionMaskInset: 0,
+                      };
+
+                      const updatePayload = async (partial, fileName = null) => {
+                        const next = {
+                          ...payload,
+                          ...partial,
+                        };
+                        const encoded = encodeImage4pValue(next);
+                        const nextDraft = { ...userCustomDraft, conteudo: encoded };
+                        setUserCustomDraft(nextDraft);
+                        if (fileName !== null) {
+                          setUserCustomDraftFileName(fileName || "");
+                        }
+                        await persistUserCustomization(userCustomHotspot, filterOverridesByCustomConfig(normalizeUserOverrides({ conteudo: encoded }), cfg, userCustomHotspot?.tipo));
+                      };
+
+                      const handleLocalImageFile = async (file) => {
+                        if (!file) return;
+                        try {
+                          setUserCustomSaving(true);
+
+                          // Remover imagem anterior se existir e for URL backend
+                          const draftRaw = String(userCustomDraft.conteudo || "");
+                          const draftPayload = decodeImage4pValue(draftRaw);
+                          const oldSrc = draftPayload?.src || "";
+                          
+                          const officialPayload = decodeImage4pValue(String(userCustomHotspot?.conteudo || ""));
+                          const officialSrc = String(officialPayload?.src || "");
+                          const oldSrcRel = relativePathFromUploadsUrl(oldSrc);
+                          const officialSrcRel = relativePathFromUploadsUrl(officialSrc);
+                          const isPrimaryImage = Boolean(oldSrcRel && officialSrcRel && oldSrcRel === officialSrcRel);
+
+                          if (oldSrc && oldSrc.includes("/uploads/") && !isPrimaryImage) {
+                            const oldPath = relativePathFromUploadsUrl(oldSrc);
+                            if (oldPath && oldPath.trim()) {
+                              try {
+                                const token = localStorage.getItem("authToken") || "";
+                                const deleteUrl = API_BASE
+                                  ? `${API_BASE}/media/item?path=${encodeURIComponent(oldPath)}`
+                                  : `/media/item?path=${encodeURIComponent(oldPath)}`;
+                                
+                                console.log("🗑️ Deletando imagem anterior:", { oldPath, deleteUrl });
+                                
+                                const deleteResponse = await fetch(deleteUrl, {
+                                  method: "DELETE",
+                                  headers: {
+                                    Authorization: `Bearer ${token}`,
+                                  },
+                                });
+                                
+                                if (!deleteResponse.ok) {
+                                  console.warn("⚠️ Falha ao deletar imagem anterior:", deleteResponse.status, deleteResponse.statusText);
+                                } else {
+                                  console.log("✅ Imagem anterior deletada");
+                                }
+                              } catch (deleteError) {
+                                console.warn("⚠️ Erro ao deletar imagem anterior:", deleteError);
+                              }
+                            }
+                          } else if (isPrimaryImage && !isAdminUser) {
+                            console.log("🔒 Imagem principal de hotspot imagem4p protegida: delete ignorado");
+                          }
+
+                          // Upload da nova imagem
+                          const uploadedFile = await uploadFileToMediaLibrary(file, "customs");
+                          void updatePayload({ src: uploadedFile.url }, file.name || "");
+                        } catch (error) {
+                          const errorMsg = error instanceof Error ? error.message : "Erro ao fazer upload de imagem";
+                          alert(errorMsg);
+                        } finally {
+                          setUserCustomSaving(false);
+                        }
+                      };
+
+                      return (
+                        <div className="rounded-md border border-border bg-muted/20 p-3">
+                          <div className="text-sm font-medium text-foreground mb-2">Imagem 4P (conteúdo)</div>
+
+                          <div className="flex flex-col gap-3">
+                            <div className="flex gap-2">
+                              <Button
+                                variant={editImage4pTab === "files" ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setEditImage4pTab("files")}
+                              >
+                                Ficheiros
+                              </Button>
+                              <Button
+                                variant={editImage4pTab === "url" ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setEditImage4pTab("url")}
+                              >
+                                URL
+                              </Button>
+                            </div>
+
+                            <div
+                              onDrop={(e) => { e.preventDefault(); handleLocalImageFile(e.dataTransfer?.files?.[0] || null); }}
+                              onDragOver={(e) => e.preventDefault()}
+                              className="min-h-[120px] rounded-md border border-dashed border-border flex items-center justify-center p-4 bg-background"
+                            >
+                              {editImage4pTab === "files" && (
+                                <div className="flex flex-col items-center gap-2 w-full">
+                                  <div className="text-sm text-muted-foreground">Arraste a imagem aqui ou escolha um ficheiro</div>
+                                  <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => handleLocalImageFile(e.target.files?.[0] || null)}
+                                    className="hidden"
+                                    disabled={userCustomSaving}
+                                  />
+                                  <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={userCustomSaving}>
+                                    Escolher ficheiro
+                                  </Button>
+                                </div>
+                              )}
+
+                              {editImage4pTab === "url" && (
+                                <div className="w-full px-2">
+                                  <div className="text-sm text-muted-foreground mb-2">Cole uma URL de imagem</div>
+                                  <input
+                                    type="text"
+                                    value={String(payload.src || "")}
+                                    onChange={(e) => { void updatePayload({ src: e.target.value }); }}
+                                    className="w-full rounded border border-input px-2 py-1 text-sm"
+                                    placeholder="Cole uma URL externa"
+                                    maxLength={cfg.allow_content.maxLength}
+                                    disabled={userCustomSaving}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            
+                          </div>
+                        </div>
+                      );
+                    })()
+                    : (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-black">Conteúdo</label>
+                        <textarea
+                          rows={2}
+                          value={String(userCustomDraft.conteudo || "")}
+                          onChange={(e) => setUserCustomDraft((prev) => ({ ...prev, conteudo: e.target.value }))}
+                          className="w-full rounded border border-black/20 px-2 py-1 text-sm"
+                          maxLength={cfg.allow_content.maxLength}
+                          disabled={userCustomSaving}
+                        />
+                      </div>
+                    )
+                )}
+
+                {cfg.allow_position.enabled && (
+                  <div className="rounded border border-black/10 p-2">
+                    <div className="text-xs font-semibold text-black/70 mb-2">Posição (delta)</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <DragNumberInput
+                        label="dx"
+                        value={toFiniteNumber(userCustomDraft.dx, 0)}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          dx: Math.max(-cfg.allow_position.range, Math.min(cfg.allow_position.range, next)),
+                        }))}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="dy"
+                        value={toFiniteNumber(userCustomDraft.dy, 0)}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          dy: Math.max(-cfg.allow_position.range, Math.min(cfg.allow_position.range, next)),
+                        }))}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="dz"
+                        value={toFiniteNumber(userCustomDraft.dz, 0)}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          dz: Math.max(-cfg.allow_position.range, Math.min(cfg.allow_position.range, next)),
+                        }))}
+                        step={0.1}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {cfg.allow_transform.enabled && (
+                  <div className="rounded border border-black/10 p-2">
+                    <div className="text-xs font-semibold text-black/70 mb-2">Transformação</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <DragNumberInput
+                        label="Escala"
+                        value={toFiniteNumber(userCustomDraft.scale, toFiniteNumber(userCustomHotspot.scale, 1))}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          scale: Math.max(cfg.allow_transform.scale.min, Math.min(cfg.allow_transform.scale.max, next)),
+                        }))}
+                        step={0.05}
+                      />
+                      <DragNumberInput
+                        label="Yaw (°)"
+                        value={toFiniteNumber(userCustomDraft.rot_yaw, toFiniteNumber(userCustomHotspot.rot_yaw, 0))}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          rot_yaw: Math.max(cfg.allow_transform.yaw.min, Math.min(cfg.allow_transform.yaw.max, next)),
+                        }))}
+                        step={1}
+                      />
+                      <DragNumberInput
+                        label="Pitch (°)"
+                        value={toFiniteNumber(userCustomDraft.rot_pitch, toFiniteNumber(userCustomHotspot.rot_pitch, 0))}
+                        onChange={(next) => setUserCustomDraft((prev) => ({
+                          ...prev,
+                          rot_pitch: Math.max(cfg.allow_transform.pitch.min, Math.min(cfg.allow_transform.pitch.max, next)),
+                        }))}
+                        step={1}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-[11px] text-neutral-600">
+                  Estas alterações são visíveis apenas para o teu utilizador.
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 };

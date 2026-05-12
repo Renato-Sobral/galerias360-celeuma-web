@@ -1164,7 +1164,7 @@ export default function PersonalizacaoPage() {
                                                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                                                     >
                                                         <option value="default">Default</option>
-                                                        <option value="custom">Custom</option>
+                                                        <option value="custom">Customizável</option>
                                                     </select>
                                                     <p className="text-xs text-muted-foreground mt-1">
                                                         Default usa os ícones do sistema, custom usa uploads personalizados.

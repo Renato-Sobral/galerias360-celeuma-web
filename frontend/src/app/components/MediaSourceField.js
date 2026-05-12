@@ -254,6 +254,10 @@ export default function MediaSourceField({
   const inputAccept = useMemo(() => normalizeInputAccept(accept), [accept]);
 
   useEffect(() => {
+    console.log("🎯 MediaSourceField:", { label, destinationPath, pickerOpen, uploading });
+  }, [pickerOpen, uploading, label, destinationPath]);
+
+  useEffect(() => {
     if (!pickerOpen) return;
 
     let cancelled = false;
@@ -400,18 +404,18 @@ export default function MediaSourceField({
 
     try {
       const uploaded = await uploadFileToMediaLibrary(file, destinationPath || currentPath);
-      const uploadedFolder = uploaded.path.split("/").slice(0, -1).join("/");
-      const [nextTree, payload] = await Promise.all([
-        fetchMediaTree(),
-        fetchMediaDirectory(uploadedFolder),
-      ]);
-
-      setTree(nextTree);
-      setCurrentPath(uploadedFolder);
-      setItems(payload.items || []);
-      setSelectedPath(uploaded.path);
+      // uploaded é { name, originalName, size, mimeType, path, url }
+      // Criar selection com a URL retornada
+      const selection = {
+        source: "upload",
+        path: uploaded.path,
+        name: uploaded.originalName || uploaded.name,
+        url: uploaded.url,
+      };
+      onChange(selection);
+      setPickerOpen(false);
     } catch (uploadError) {
-      setError(uploadError.message || "Erro ao enviar ficheiro para o File Manager.");
+      setError(uploadError.message || "Erro ao fazer upload do ficheiro.");
     } finally {
       setUploading(false);
       if (uploadInputRef.current) uploadInputRef.current.value = "";
@@ -487,7 +491,10 @@ export default function MediaSourceField({
                   />
                   <Button
                     type="button"
-                    onClick={() => uploadInputRef.current?.click()}
+                    onClick={() => {
+                      console.log("📁 Abrindo seletor de ficheiros");
+                      uploadInputRef.current?.click();
+                    }}
                     disabled={uploading}
                   >
                     <Upload className="mr-2 h-4 w-4" />

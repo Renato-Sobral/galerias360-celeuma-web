@@ -7,10 +7,12 @@ const Ponto = require('./ponto');
 const PontoTrajeto = require('./ponto_trajeto');
 const PontoCategoria = require('./ponto_categoria');
 const Hotspot = require('./hotspot');
+const HotspotUserCustomization = require('./hotspot_user_customization');
 const CategoriaPonto = require('./categoria_ponto');
 const ThemePreset = require('./theme_preset');
 const AppSetting = require('./app_setting');
 const PontoAlinhamento = require('./ponto_alinhamento');
+const User = require('./user');
 
 // Role <-> Permission
 Role.belongsToMany(Permission, {
@@ -50,6 +52,13 @@ Rota.hasMany(Trajeto, { foreignKey: 'id_rota', onDelete: 'CASCADE' });
 Hotspot.belongsTo(Ponto, { foreignKey: 'id_ponto' });
 Ponto.hasMany(Hotspot, { foreignKey: 'id_ponto' });
 
+// HotspotUserCustomization → Hotspot/User
+HotspotUserCustomization.belongsTo(Hotspot, { foreignKey: 'id_hotspot', onDelete: 'CASCADE' });
+Hotspot.hasMany(HotspotUserCustomization, { foreignKey: 'id_hotspot', onDelete: 'CASCADE' });
+
+HotspotUserCustomization.belongsTo(User, { foreignKey: 'id_user', onDelete: 'CASCADE' });
+User.hasMany(HotspotUserCustomization, { foreignKey: 'id_user', onDelete: 'CASCADE' });
+
 // Alinhamento → Ponto
 PontoAlinhamento.belongsTo(Ponto, { foreignKey: 'id_ponto' });
 Ponto.hasMany(PontoAlinhamento, { foreignKey: 'id_ponto' });
@@ -79,7 +88,9 @@ module.exports = {
     PontoCategoria,
     PontoTrajeto,
     Hotspot,
+    HotspotUserCustomization,
     ThemePreset,
     AppSetting,
-    PontoAlinhamento
+    PontoAlinhamento,
+    User,
 };

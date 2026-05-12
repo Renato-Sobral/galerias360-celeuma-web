@@ -1,110 +1,74 @@
 "use client";
 
-import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useThemePresets } from "./themePresetContext";
 
 const DEFAULT_LIGHT_LOGO = "/celeumaBlack.svg";
 const DEFAULT_DARK_LOGO = "/celeuma.svg";
 
+/* Resolve logo URL */
+function resolveLogoUrl(url) {
+  if (!url) return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (typeof window === "undefined") return url;
+  const apiBase = window.location.origin;
+  if (!apiBase) return url;
+  try {
+    return new URL(url, apiBase).toString();
+  } catch {
+    return url;
+  }
+}
+
 const Logo = ({ width = 170, height = 100 }) => {
   const { logos } = useThemePresets();
-  const [lightSrc, setLightSrc] = useState(DEFAULT_LIGHT_LOGO);
-  const [darkSrc, setDarkSrc] = useState(DEFAULT_DARK_LOGO);
+  const lightImgRef = useRef(null);
+  const darkImgRef = useRef(null);
 
-  useEffect(() => {
+  // Update logos when context changes (after cache script has already replaced them)
+  useLayoutEffect(() => {
+    if (!lightImgRef.current) return;
     const nextLightSrc = logos?.light || DEFAULT_LIGHT_LOGO;
-
-    if (nextLightSrc.startsWith("/")) {
-      setLightSrc(nextLightSrc);
-      return;
+    const resolved = resolveLogoUrl(nextLightSrc);
+    if (resolved) {
+      lightImgRef.current.src = resolved;
     }
-
-    let cancelled = false;
-    setLightSrc(null);
-
-    const img = new window.Image();
-    img.onload = () => {
-      if (!cancelled) setLightSrc(nextLightSrc);
-    };
-    img.onerror = () => {
-      if (!cancelled) setLightSrc(nextLightSrc);
-    };
-    img.src = nextLightSrc;
-
-    return () => {
-      cancelled = true;
-    };
   }, [logos?.light]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!darkImgRef.current) return;
     const nextDarkSrc = logos?.dark || DEFAULT_DARK_LOGO;
-
-    if (nextDarkSrc.startsWith("/")) {
-      setDarkSrc(nextDarkSrc);
-      return;
+    const resolved = resolveLogoUrl(nextDarkSrc);
+    if (resolved) {
+      darkImgRef.current.src = resolved;
     }
-
-    let cancelled = false;
-    setDarkSrc(null);
-
-    const img = new window.Image();
-    img.onload = () => {
-      if (!cancelled) setDarkSrc(nextDarkSrc);
-    };
-    img.onerror = () => {
-      if (!cancelled) setDarkSrc(nextDarkSrc);
-    };
-    img.src = nextDarkSrc;
-
-    return () => {
-      cancelled = true;
-    };
   }, [logos?.dark]);
 
+  // Update invert flag
+  useLayoutEffect(() => {
+    if (!darkImgRef.current) return;
+    darkImgRef.current.className = `hidden dark:block object-contain w-full h-full ${logos?.invertDark ? "dark:invert" : ""}`;
+  }, [logos?.invertDark]);
+
   return (
-    <div style={{ width, height }} className="relative">
+    <div style={{ width, height }} className="relative" suppressHydrationWarning>
       {/* Logo para modo claro */}
-      {lightSrc ? (
-        lightSrc.startsWith("/") ? (
-          <Image
-            key={`light-${lightSrc}`}
-            src={lightSrc}
-            alt="Logo modo claro"
-            fill
-            className="block dark:hidden object-contain"
-            priority
-          />
-        ) : (
-          <img
-            key={`light-${lightSrc}`}
-            src={lightSrc}
-            alt="Logo modo claro"
-            className="block dark:hidden object-contain w-full h-full"
-          />
-        )
-      ) : null}
+      <img
+        ref={lightImgRef}
+        src={DEFAULT_LIGHT_LOGO}
+        alt="Logo modo claro"
+        className="block dark:hidden object-contain w-full h-full"
+        suppressHydrationWarning
+      />
 
       {/* Logo para modo escuro */}
-      {darkSrc ? (
-        darkSrc.startsWith("/") ? (
-          <Image
-            key={`dark-${darkSrc}`}
-            src={darkSrc}
-            alt="Logo modo escuro"
-            fill
-            className={`hidden dark:block object-contain ${logos?.invertDark ? "dark:invert" : ""}`}
-            priority
-          />
-        ) : (
-          <img
-            key={`dark-${darkSrc}`}
-            src={darkSrc}
-            alt="Logo modo escuro"
-            className={`hidden dark:block object-contain w-full h-full ${logos?.invertDark ? "dark:invert" : ""}`}
-          />
-        )
-      ) : null}
+      <img
+        ref={darkImgRef}
+        src={DEFAULT_DARK_LOGO}
+        alt="Logo modo escuro"
+        className={`hidden dark:block object-contain w-full h-full ${logos?.invertDark ? "dark:invert" : ""}`}
+        suppressHydrationWarning
+      />
     </div>
   );
 };

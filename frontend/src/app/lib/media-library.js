@@ -7,7 +7,12 @@ export function getAuthToken() {
 
 export function getAuthHeaders() {
   const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  if (!token) {
+    console.warn("⚠️ Sem token de autenticação!");
+  }
+  console.log("🔑 getAuthHeaders:", { hasToken: !!token, tokenLength: token?.length, headers });
+  return headers;
 }
 
 export function getMediaApiUrl(path = "") {
@@ -96,14 +101,17 @@ export async function uploadFileToMediaLibrary(file, destinationPath = "") {
   });
 
   const payload = await response.json().catch(() => null);
+  
   if (!response.ok || !payload?.success || !payload.files?.[0]) {
-    throw new Error(payload?.message || "Erro ao enviar ficheiro para o File Manager.");
+    const errorMsg = payload?.message || "Erro ao enviar ficheiro para o File Manager.";
+    throw new Error(errorMsg);
   }
 
   const uploaded = payload.files[0];
   return {
     path: uploaded.path,
     name: uploaded.name || uploaded.originalName,
+    originalName: uploaded.originalName,
     url: resolveUploadsUrl(uploaded.path),
     mimeType: uploaded.mimeType || file.type,
   };

@@ -4,11 +4,32 @@ import { useState, useEffect, useCallback } from "react";
 import ThemePresetContext, { CSS_VAR_KEYS } from "./themePresetContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL;
+const THEME_CACHE_KEY = "galerias360_theme_cache";
 
 function getApiBase() {
     if (typeof API === "string" && API.trim()) return API.replace(/\/$/, "");
     if (typeof window !== "undefined") return window.location.origin;
     return "";
+}
+
+/* ── cache helpers ── */
+function getThemeFromCache() {
+    if (typeof window === "undefined") return null;
+    try {
+        const cached = localStorage.getItem(THEME_CACHE_KEY);
+        return cached ? JSON.parse(cached) : null;
+    } catch {
+        return null;
+    }
+}
+
+function saveThemeToCache(preset) {
+    if (typeof window === "undefined") return;
+    try {
+        localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(preset));
+    } catch {
+        // localStorage quota exceeded or unavailable
+    }
 }
 
 async function safeFetchJson(pathname) {
@@ -120,14 +141,30 @@ export default function ThemePresetProvider({ children }) {
     /* Fetch active theme */
     const refreshActive = useCallback(async () => {
         const json = await safeFetchJson("/theme/active");
-        if (json?.success && json.data) setActivePreset(json.data);
-        else setActivePreset(null);
+        if (json?.success && json.data) {
+            setActivePreset(json.data);
+            saveThemeToCache(json.data);
+        } else {
+            setActivePreset(null);
+        }
     }, []);
 
     const refreshFavicon = useCallback(async () => {
         const json = await safeFetchJson("/theme/favicon");
         if (json?.success) {
-            setFavicon(json.data?.url || null);
+            const faviconUrl = json.data?.url || null;
+            setFavicon(faviconUrl);
+            // Cache favicon
+            if (faviconUrl) {
+                try {
+                    const cached = localStorage.getItem(THEME_CACHE_KEY);
+                    const theme = cached ? JSON.parse(cached) : {};
+                    theme.favicon = faviconUrl;
+                    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(theme));
+                } catch {
+                    // Fail silently
+                }
+            }
             return;
         }
         setFavicon(null);
@@ -155,11 +192,30 @@ export default function ThemePresetProvider({ children }) {
 
     /* Bootstrap */
     useEffect(() => {
-        // Only fetch the active preset by default.
-        // The presets list is only needed for the admin personalization UI.
-        refreshActive();
+        // Load from cache immediately
+        const cachedTheme = getThemeFromCache();
+        if (cachedTheme) {
+            setActivePreset(cachedTheme);
+            if (cachedTheme.favicon) {
+                setFavicon(cachedTheme.favicon);
+            }
+        }
+
+        // Fetch fresh theme from server in background
+        const loadFresh = async () => {
+            const json = await safeFetchJson("/theme/active");
+            if (json?.success && json.data) {
+                // Only update if different from cache
+                if (JSON.stringify(json.data) !== JSON.stringify(cachedTheme)) {
+                    setActivePreset(json.data);
+                    saveThemeToCache(json.data);
+                }
+            }
+        };
+
+        loadFresh();
         refreshFavicon();
-    }, [refreshActive, refreshFavicon]);
+    }, [refreshFavicon]);
 
     return (
         <ThemePresetContext.Provider

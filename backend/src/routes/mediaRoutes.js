@@ -5,7 +5,10 @@ const mediaController = require('../controllers/mediaController');
 
 function handleUploadMiddleware(req, res, next) {
 	mediaController.uploadMiddleware(req, res, (err) => {
-		if (!err) return next();
+		if (!err) {
+			console.log('✅ Multer: Ficheiro recebido com sucesso');
+			return next();
+		}
 
 		const isMulterLimit = err.code === 'LIMIT_FILE_SIZE';
 		const status = err.statusCode || (isMulterLimit ? 413 : 400);
@@ -13,6 +16,7 @@ function handleUploadMiddleware(req, res, next) {
 			? 'Ficheiro demasiado grande (limite 250MB por ficheiro).'
 			: err.message || 'Erro no upload';
 
+		console.error('❌ Multer erro:', { code: err.code, message: err.message, status });
 		return res.status(status).json({ success: false, message });
 	});
 }

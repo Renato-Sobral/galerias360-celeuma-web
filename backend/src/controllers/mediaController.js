@@ -6,6 +6,7 @@ const Trajeto = require('../models/trajeto');
 const ThemePreset = require('../models/theme_preset');
 const AppSetting = require('../models/app_setting');
 const Ponto = require('../models/ponto');
+const Hotspot = require('../models/hotspot');
 const MapOverlay = require('../models/map_overlay');
 const {
   ALL_UPLOADS_ROOTS_NORMALIZED,
@@ -233,14 +234,71 @@ function ensureUniqueDestinationPathSync(destinationAbsolutePath) {
   }
 }
 
+function extractUploadsRelativePathFromUrl(value) {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) return '';
+
+  const uploadsMarker = '/uploads/';
+  const markerIndex = rawValue.indexOf(uploadsMarker);
+  if (markerIndex < 0) return '';
+
+  const start = markerIndex + uploadsMarker.length;
+  const afterMarker = rawValue.slice(start);
+  const cleanPath = afterMarker.split(/[?#]/)[0];
+
+  try {
+    return normalizeUploadsRelativePath(cleanPath);
+  } catch {
+    return '';
+  }
+}
+
+function extractImage4pSrc(rawValue) {
+  const value = String(rawValue || '');
+  if (!value.startsWith('img4p:')) return '';
+
+  try {
+    const encodedPayload = value.slice('img4p:'.length);
+    const json = Buffer.from(encodedPayload, 'base64').toString('utf8');
+    const parsed = JSON.parse(json);
+    return String(parsed?.src || '');
+  } catch {
+    return '';
+  }
+}
+
+async function getImage4pPrimaryReferences(relativePath) {
+  const targetRelativePath = normalizeUploadsRelativePath(relativePath);
+  const hotspots = await Hotspot.findAll({
+    where: { tipo: 'imagem4p' },
+    attributes: ['id_hotspot', 'id_ponto', 'conteudo'],
+  });
+
+  return hotspots
+    .map((hotspot) => {
+      const src = extractImage4pSrc(hotspot.conteudo);
+      const srcRelativePath = extractUploadsRelativePathFromUrl(src);
+      if (!srcRelativePath || srcRelativePath !== targetRelativePath) return null;
+
+      return {
+        id_hotspot: hotspot.id_hotspot,
+        id_ponto: hotspot.id_ponto,
+      };
+    })
+    .filter(Boolean);
+}
+
 const uploadStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
     try {
       const destinationPath = normalizeUploadsRelativePath(req.body.destinationPath || '');
       const destinationAbsolutePath = absoluteFromUploadsRelative(destinationPath);
+      console.log('📁 Criando diretório de destino:', { destinationPath, destinationAbsolutePath });
       fs.mkdirSync(destinationAbsolutePath, { recursive: true });
+      console.log('✅ Diretório criado/confirmado');
       cb(null, destinationAbsolutePath);
     } catch (error) {
+      console.error('❌ Erro ao criar diretório:', error.message);
       cb(error);
     }
   },
@@ -250,8 +308,10 @@ const uploadStorage = multer.diskStorage({
       const destinationAbsolutePath = absoluteFromUploadsRelative(destinationPath);
       const desiredPath = path.join(destinationAbsolutePath, file.originalname);
       const finalPath = ensureUniqueDestinationPathSync(desiredPath);
+      console.log('📄 Nome do ficheiro gerado:', { original: file.originalname, final: path.basename(finalPath) });
       cb(null, path.basename(finalPath));
     } catch (error) {
+      console.error('❌ Erro ao gerar nome do ficheiro:', error.message);
       cb(error);
     }
   },
@@ -315,8 +375,12 @@ exports.createFolder = async (req, res) => {
 exports.uploadFiles = async (req, res) => {
   try {
     const destinationPath = normalizeUploadsRelativePath(req.body.destinationPath || '');
+    const userId = req.auth?.id || 'unknown';
+
+    console.log('📤 Upload recebido:', { userId, destinationPath, filesCount: req.files?.length, firstFileName: req.files?.[0]?.originalname });
 
     if (!Array.isArray(req.files) || req.files.length === 0) {
+      console.log('❌ Nenhum ficheiro enviado');
       return res.status(400).json({ success: false, message: 'Nenhum ficheiro enviado' });
     }
 
@@ -332,9 +396,10 @@ exports.uploadFiles = async (req, res) => {
       };
     });
 
+    console.log('✅ Upload concluído:', { uploaded: uploaded.map(u => u.name) });
     return res.status(201).json({ success: true, files: uploaded });
   } catch (error) {
-    console.error('Erro ao fazer upload:', error);
+    console.error('❌ Erro ao fazer upload:', { error: error.message, stack: error.stack });
     return res.status(500).json({ success: false, message: 'Erro ao fazer upload' });
   }
 };
@@ -395,6 +460,22 @@ exports.deleteItem = async (req, res) => {
 
     if (!fs.existsSync(targetAbsolutePath)) {
       return res.status(404).json({ success: false, message: 'Item não encontrado' });
+    }
+
+    const image4pPrimaryReferences = await getImage4pPrimaryReferences(targetPath);
+    if (image4pPrimaryReferences.length > 0) {
+      const isAdmin = String(req.auth?.role || '').toLowerCase() === 'admin';
+      const forcePrimaryDelete = String(req.query.forcePrimaryDelete || req.body.forcePrimaryDelete || '') === '1'
+        || req.body.forcePrimaryDelete === true;
+
+      if (!(isAdmin && forcePrimaryDelete)) {
+        return res.status(403).json({
+          success: false,
+          code: 'PRIMARY_IMAGE4P_PROTECTED',
+          message: 'Imagem principal de hotspot imagem4p protegida. Apenas admin pode remover com forcePrimaryDelete=1.',
+          references: image4pPrimaryReferences,
+        });
+      }
     }
 
     const stat = await fs.promises.stat(targetAbsolutePath);
