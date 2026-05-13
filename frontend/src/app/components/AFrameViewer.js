@@ -91,11 +91,54 @@ const useDragToChange = (value, onChange, sensitivity = 0.5) => {
 function DragNumberInput({ label, value, onChange, step = 0.1 }) {
   const inputRef = useRef(null);
   const { isDragging, handleMouseDown } = useDragToChange(value, onChange, step);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
 
-  const handleClick = () => {
-    // Ao clicar, seleciona todo o texto e coloca em foco
-    if (inputRef.current) {
-      inputRef.current.select();
+  // When external value changes and we're not editing, ensure displayed value updates
+  useEffect(() => {
+    if (!isEditing) setEditValue("");
+  }, [value, isEditing]);
+
+  const handleInputMouseDown = (e) => {
+    handleMouseDown(e, inputRef);
+    // don't immediately clear; wait to see if the user drags (isDragging will become true)
+  };
+
+  const handleMouseUp = () => {
+    // If the user didn't start dragging, treat as a click -> enter edit mode and clear
+    if (!isDragging) {
+      setIsEditing(true);
+      setEditValue("");
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  };
+
+  const commitEdit = () => {
+    const raw = String(editValue || "").trim().replace(",", ".");
+    const next = parseFloat(raw);
+    if (Number.isFinite(next)) onChange(next);
+    setIsEditing(false);
+    setEditValue("");
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      commitEdit();
+      inputRef.current?.blur();
+    } else if (e.key === "Escape") {
+      setIsEditing(false);
+      setEditValue("");
+      inputRef.current?.blur();
+    }
+  };
+
+  const handleChange = (e) => {
+    if (isEditing) {
+      setEditValue(e.target.value);
+    } else {
+      const next = parseFloat(e.target.value);
+      if (!Number.isFinite(next)) return;
+      onChange(next);
     }
   };
 
@@ -104,21 +147,16 @@ function DragNumberInput({ label, value, onChange, step = 0.1 }) {
       <label className="text-xs font-medium">{label}</label>
       <input
         ref={inputRef}
-        type="number"
+        type="text"
+        inputMode="decimal"
         step={step}
-        value={Number(value) || 0}
-        onChange={(e) => {
-          const next = parseFloat(e.target.value);
-          if (!Number.isFinite(next)) return;
-          onChange(next);
-        }}
-        onMouseDown={(e) => {
-          handleMouseDown(e, inputRef);
-          handleClick();
-        }}
-        onClick={handleClick}
-        className={`border rounded px-2 py-1 text-sm dark:bg-black cursor-ew-resize ${isDragging ? "ring-2 ring-cyan-500" : ""
-          }`}
+        value={isEditing ? editValue : (Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "0.0")}
+        onChange={handleChange}
+        onMouseDown={handleInputMouseDown}
+        onMouseUp={handleMouseUp}
+        onKeyDown={handleKeyDown}
+        onBlur={() => { if (isEditing) commitEdit(); }}
+        className={`border rounded px-2 py-1 text-sm dark:bg-black cursor-ew-resize ${isDragging ? "ring-2 ring-cyan-500" : ""}`}
       />
     </div>
   );
@@ -189,6 +227,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     custom_icons: {},
   };
   const DEFAULT_PANORAMA_DOME_RADIUS = 700;
+  // Hotspots não devem ficar perto demais da câmara — distância mínima em unidades do mundo
+  const MIN_HOTSPOT_DISTANCE_FROM_CAMERA = 50;
   const DEFAULT_DOME_ROTATION_Y = -130;
   const DEFAULT_DOME_ROTATION_X = 0;
   const DEFAULT_DOME_ROTATION_Z = 0;
@@ -198,6 +238,12 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const DEFAULT_POINT_LIGHT_INTENSITY = 1;
   const DEFAULT_POINT_LIGHT_COLOR = "#ffffff";
   const DEFAULT_POINT_LIGHT_DISTANCE = 2200;
+  const formatNumberOneDecimal = (n) => {
+    const num = Number(n);
+    if (!Number.isFinite(num)) return String(n ?? "");
+    // uma casa decimal e vírgula como separador decimal
+    return num.toFixed(1).replace(".", ",");
+  };
   const DEFAULT_POINT_LIGHT_SHADOW_BIAS = -0.00015;
   const DEFAULT_MODEL_CONTACT_SHADOW_OPACITY = 0.34;
   const MODEL_CONTACT_SHADOW_MIN_RADIUS = 0.3;
@@ -700,6 +746,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editImage4pDepthMode, setEditImage4pDepthMode] = useState("none");
   const [editImage4pOcclusionMaskPoints, setEditImage4pOcclusionMaskPoints] = useState([]);
   const [editImage4pOcclusionMaskInset, setEditImage4pOcclusionMaskInset] = useState(0);
+  const editImage4pHasOcclusion = editImage4pDepthMode === "occlusion-mask";
   const [inspectModeHotspotId, setInspectModeHotspotId] = useState(null);
   const [editInspect3dSrc, setEditInspect3dSrc] = useState(null);
   const [editInspect3dRotationSpeed, setEditInspect3dRotationSpeed] = useState(1);
@@ -1036,10 +1083,24 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
 
     const spherical = toSpherical(nx, ny, nz);
-    setEditX(nx);
-    setEditY(ny);
-    setEditZ(nz);
-    setEditRadius(spherical.radius);
+    // Garantir distância mínima ao centro (e, indiretamente, prevenir valores muito pequenos)
+    let finalX = nx;
+    let finalY = ny;
+    let finalZ = nz;
+    let finalRadius = spherical.radius;
+
+    if (Number.isFinite(finalRadius) && finalRadius < MIN_HOTSPOT_DISTANCE_FROM_CAMERA) {
+      const factor = MIN_HOTSPOT_DISTANCE_FROM_CAMERA / finalRadius;
+      finalX = nx * factor;
+      finalY = ny * factor;
+      finalZ = nz * factor;
+      finalRadius = MIN_HOTSPOT_DISTANCE_FROM_CAMERA;
+    }
+
+    setEditX(finalX);
+    setEditY(finalY);
+    setEditZ(finalZ);
+    setEditRadius(finalRadius);
   };
 
   useEffect(() => {
@@ -3015,6 +3076,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     if (!isImage4pCaptureMode || !sceneEl?.canvas) return;
 
     const canvas = sceneEl.canvas;
+    const previousCanvasCursor = canvas.style.cursor;
+    const previousBodyCursor = document.body.style.cursor;
+    canvas.style.cursor = "crosshair";
+    document.body.style.cursor = "crosshair";
     image4pMagnifierCORSBlockedRef.current = false;
 
     const handleMove = (event) => {
@@ -3143,6 +3208,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       canvas.removeEventListener("mousemove", handleMove);
       canvas.removeEventListener("mouseenter", handleEnter);
       canvas.removeEventListener("mouseleave", handleLeave);
+      canvas.style.cursor = previousCanvasCursor;
+      document.body.style.cursor = previousBodyCursor;
       if (image4pMagnifierRafRef.current) {
         cancelAnimationFrame(image4pMagnifierRafRef.current);
         image4pMagnifierRafRef.current = null;
@@ -3259,6 +3326,26 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     const intersection = hit.point;
     const placement = hit.placement;
+    // Evitar criar hotspots muito perto da câmara: empurra o ponto para fora se necessário
+    try {
+      const sceneEl = sceneRef.current;
+      const THREE = window?.THREE;
+      if (THREE && sceneEl?.camera) {
+        const cameraWorldPos = new THREE.Vector3();
+        sceneEl.camera.getWorldPosition(cameraWorldPos);
+        const dist = cameraWorldPos.distanceTo(intersection);
+        if (dist < MIN_HOTSPOT_DISTANCE_FROM_CAMERA) {
+          const dir = intersection.clone().sub(cameraWorldPos).normalize();
+          const pushed = cameraWorldPos.clone().add(dir.multiplyScalar(MIN_HOTSPOT_DISTANCE_FROM_CAMERA));
+          // manter Y se for colocação no chão
+          if (placement === "ground") pushed.y = intersection.y;
+          intersection.copy(pushed);
+          console.warn(`Hotspot muito perto da câmara: deslocado para distância mínima (${MIN_HOTSPOT_DISTANCE_FROM_CAMERA}).`);
+        }
+      }
+    } catch (err) {
+      console.warn("Não foi possível validar distância da câmara para hotspot:", err);
+    }
 
     try {
       const res = await fetch(buildApiUrl("/hotspot/add"), {
@@ -4449,7 +4536,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
 
 
-              <label className="text-sm font-medium">Alinhamento (Roll): {Math.round(domeRotationZ)}°</label>
+              <label className="text-sm font-medium">Alinhamento (Roll): {formatNumberOneDecimal(domeRotationZ)}°</label>
               <input
                 className="w-full accent-black"
                 type="range"
@@ -4477,7 +4564,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 }}
               />
 
-              <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw relativo): {Math.round(relativeDomeRotationY)}°</label>
+              <label className="text-sm font-medium mt-2">Rotacao Horizontal (Yaw relativo): {formatNumberOneDecimal(relativeDomeRotationY)}°</label>
               <input
                 className="w-full accent-black"
                 type="range"
@@ -4494,7 +4581,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 }}
               />
 
-              <label className="text-sm font-medium">Rotacao Vertical (Pitch relativo): {Math.round(relativeDomeRotationX)}°</label>
+              <label className="text-sm font-medium">Rotacao Vertical (Pitch relativo): {formatNumberOneDecimal(relativeDomeRotationX)}°</label>
               <input
                 className="w-full accent-black"
                 type="range"
@@ -4751,7 +4838,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       destinationPath="media"
                     />
 
-                    <div className="rounded border border-black/10 p-2">
+                    <div className="rounded border border-black/10 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-sm font-medium">Pontos: {Array.isArray(editImage4pPoints) ? editImage4pPoints.length : 0} (mín. 4)</div>
                         <button
@@ -4771,25 +4858,159 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                         </div>
                       )}
 
-                      <div className="mt-3 rounded border border-black/10 p-2">
-                        <label className="text-xs font-medium">Profundidade / Oclusão</label>
-                        <select
-                          value={editImage4pDepthMode}
-                          onChange={(e) => setEditImage4pDepthMode(e.target.value === "occlusion-mask" ? "occlusion-mask" : "none")}
-                          className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-black"
-                        >
-                          <option value="none">Sem oclusão</option>
-                          <option value="occlusion-mask">Máscara de oclusão (objetos à frente)</option>
-                        </select>
+                      <div className="mt-3 flex flex-col gap-3">
+                        <div className="rounded border border-black/10 bg-black/[0.02] p-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-black/60">Captura e aparência</div>
 
-                        {editImage4pDepthMode === "occlusion-mask" && (
-                          <>
-                            <div className="mt-2 text-xs text-neutral-600">
-                              Define uma máscara para os objetos em primeiro plano (ex.: poste). A imagem 4 pontos ficará atrás dessa máscara.
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nx = Number(editX);
+                                const ny = Number(editY);
+                                const nz = Number(editZ);
+                                if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
+                                setEditImage4pPoints((prev) => [...(Array.isArray(prev) ? prev : []), { x: nx, y: ny, z: nz }]);
+                              }}
+                              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                            >
+                              Adicionar ponto (XYZ atual)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditImage4pPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
+                              className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                            >
+                              Remover último ponto
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditImage4pPoints([])}
+                              className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                            >
+                              Limpar pontos
+                            </button>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs font-medium">Opacidade</label>
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={editImage4pOpacity}
+                                onChange={(e) => {
+                                  const next = parseFloat(e.target.value);
+                                  if (!Number.isFinite(next)) return;
+                                  setEditImage4pOpacity(Math.max(0, Math.min(1, next)));
+                                }}
+                                className="w-full accent-black"
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs font-medium">Brilho: {Number(editImage4pBrightness || 0).toFixed(2)}</label>
+                              <input
+                                type="range"
+                                min="0"
+                                max="2"
+                                step="0.05"
+                                value={editImage4pBrightness}
+                                onChange={(e) => {
+                                  const next = parseFloat(e.target.value);
+                                  if (!Number.isFinite(next)) return;
+                                  setEditImage4pBrightness(Math.max(0, Math.min(5, next)));
+                                }}
+                                className="w-full accent-black"
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs font-medium">Inset (evitar z-fight)</label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={editImage4pInset}
+                                onChange={(e) => {
+                                  const next = parseFloat(e.target.value);
+                                  if (!Number.isFinite(next)) return;
+                                  setEditImage4pInset(next);
+                                }}
+                                className="rounded border border-black/20 px-2 py-1 text-sm dark:bg-black"
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs font-medium">Rotação (°)</label>
+                              <input
+                                type="number"
+                                step="1"
+                                value={editImage4pRotateDeg}
+                                onChange={(e) => {
+                                  const next = parseFloat(e.target.value);
+                                  if (!Number.isFinite(next)) return;
+                                  setEditImage4pRotateDeg(next);
+                                }}
+                                className="rounded border border-black/20 px-2 py-1 text-sm dark:bg-black"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-4">
+                            <label className="inline-flex items-center gap-2 text-xs font-medium">
+                              <input
+                                type="checkbox"
+                                checked={editImage4pFlipX}
+                                onChange={(e) => setEditImage4pFlipX(Boolean(e.target.checked))}
+                                className="accent-black"
+                              />
+                              Espelhar H
+                            </label>
+
+                            <label className="inline-flex items-center gap-2 text-xs font-medium">
+                              <input
+                                type="checkbox"
+                                checked={editImage4pFlipY}
+                                onChange={(e) => setEditImage4pFlipY(Boolean(e.target.checked))}
+                                className="accent-black"
+                              />
+                              Espelhar V
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="rounded border border-black/10 bg-black/[0.02] p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-black/60">Oclusão / profundidade</div>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${editImage4pHasOcclusion ? "bg-emerald-100 text-emerald-800" : "bg-neutral-100 text-neutral-600"}`}>
+                              {editImage4pHasOcclusion ? "Ativa" : "Sem oclusão"}
+                            </span>
+                          </div>
+
+                          <div className="mt-2 text-xs text-neutral-600">
+                            Se ativa, a imagem 4 pontos passa atrás de uma máscara desenhada em 360 para respeitar objetos em primeiro plano.
+                          </div>
+
+                          <label className="mt-3 block text-xs font-medium">Modo de profundidade</label>
+                          <select
+                            value={editImage4pDepthMode}
+                            onChange={(e) => setEditImage4pDepthMode(e.target.value === "occlusion-mask" ? "occlusion-mask" : "none")}
+                            className="mt-1 w-full rounded border border-black/20 px-2 py-1 text-sm dark:bg-black"
+                          >
+                            <option value="none">Sem oclusão</option>
+                            <option value="occlusion-mask">Máscara de oclusão (objetos à frente)</option>
+                          </select>
+
+                          <div className="mt-3 rounded border border-black/10 bg-white/70 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-sm font-medium">Máscara</div>
+                              <div className="text-xs text-neutral-600">{Array.isArray(editImage4pOcclusionMaskPoints) ? editImage4pOcclusionMaskPoints.length : 0} pontos</div>
                             </div>
 
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <div className="text-sm font-medium">Máscara: {Array.isArray(editImage4pOcclusionMaskPoints) ? editImage4pOcclusionMaskPoints.length : 0} pontos (mín. 3)</div>
+                            <div className="mt-1 text-xs text-neutral-600">
+                              Mínimo recomendado: 3 pontos. O inset ajusta o plano virtual da máscara.
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-2">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -4797,36 +5018,36 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                                   setIsCapturingImage4pMaskPoints((prev) => !prev);
                                 }}
                                 className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                                disabled={!editImage4pHasOcclusion}
                               >
-                                {isCapturingImage4pMaskPoints ? "Parar máscara" : "Capturar máscara no 360"}
+                                {isCapturingImage4pMaskPoints ? "Parar captura da máscara" : "Capturar máscara no 360"}
                               </button>
-                            </div>
-
-                            {isCapturingImage4pMaskPoints && (
-                              <div className="mt-1 text-xs text-neutral-600">
-                                Clica no 360 para desenhar o contorno do objeto que deve ficar à frente.
-                              </div>
-                            )}
-
-                            <div className="mt-2 flex flex-wrap gap-2">
                               <button
                                 type="button"
                                 onClick={() => setEditImage4pOcclusionMaskPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
                                 className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
+                                disabled={!editImage4pHasOcclusion}
                               >
-                                Remover último (máscara)
+                                Remover último
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setEditImage4pOcclusionMaskPoints([])}
                                 className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                                disabled={!editImage4pHasOcclusion}
                               >
                                 Limpar máscara
                               </button>
                             </div>
 
+                            {isCapturingImage4pMaskPoints && (
+                              <div className="mt-2 text-xs text-neutral-600">
+                                Clica no 360 para desenhar o contorno do objeto que deve ficar à frente.
+                              </div>
+                            )}
+
                             <div className="mt-2 flex flex-col gap-1">
-                              <label className="text-xs font-medium">Inset da máscara (aprox. câmara)</label>
+                              <label className="text-xs font-medium">Inset da máscara</label>
                               <input
                                 type="number"
                                 step="0.1"
@@ -4836,130 +5057,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                                   if (!Number.isFinite(next)) return;
                                   setEditImage4pOcclusionMaskInset(next);
                                 }}
-                                className="border rounded px-2 py-1 text-sm dark:bg-black"
+                                className="rounded border border-black/20 px-2 py-1 text-sm dark:bg-black"
+                                disabled={!editImage4pHasOcclusion}
                               />
                             </div>
-                          </>
-                        )}
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const nx = Number(editX);
-                            const ny = Number(editY);
-                            const nz = Number(editZ);
-                            if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
-                            setEditImage4pPoints((prev) => [...(Array.isArray(prev) ? prev : []), { x: nx, y: ny, z: nz }]);
-                          }}
-                          className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                        >
-                          Adicionar ponto (XYZ atual)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditImage4pPoints((prev) => (Array.isArray(prev) ? prev.slice(0, -1) : []))}
-                          className="rounded border border-black/20 px-2 py-1 text-xs font-medium hover:bg-black hover:text-white"
-                        >
-                          Remover último
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditImage4pPoints([])}
-                          className="rounded border border-red-600/30 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                        >
-                          Limpar
-                        </button>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs font-medium">Opacidade</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.05"
-                            value={editImage4pOpacity}
-                            onChange={(e) => {
-                              const next = parseFloat(e.target.value);
-                              if (!Number.isFinite(next)) return;
-                              setEditImage4pOpacity(Math.max(0, Math.min(1, next)));
-                            }}
-                            className="w-full accent-black"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs font-medium">Brilho: {Number(editImage4pBrightness || 0).toFixed(2)}</label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="2"
-                            step="0.05"
-                            value={editImage4pBrightness}
-                            onChange={(e) => {
-                              const next = parseFloat(e.target.value);
-                              if (!Number.isFinite(next)) return;
-                              setEditImage4pBrightness(Math.max(0, Math.min(5, next)));
-                            }}
-                            className="w-full accent-black"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs font-medium">Inset (evitar z-fight)</label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={editImage4pInset}
-                            onChange={(e) => {
-                              const next = parseFloat(e.target.value);
-                              if (!Number.isFinite(next)) return;
-                              setEditImage4pInset(next);
-                            }}
-                            className="border rounded px-2 py-1 text-sm dark:bg-black"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-3 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs font-medium">Rotação (°)</label>
-                          <input
-                            type="number"
-                            step="1"
-                            value={editImage4pRotateDeg}
-                            onChange={(e) => {
-                              const next = parseFloat(e.target.value);
-                              if (!Number.isFinite(next)) return;
-                              setEditImage4pRotateDeg(next);
-                            }}
-                            className="border rounded px-2 py-1 text-sm dark:bg-black"
-                          />
-                        </div>
-
-                        <div className="flex items-end">
-                          <label className="flex items-center gap-2 text-xs font-medium">
-                            <input
-                              type="checkbox"
-                              checked={editImage4pFlipX}
-                              onChange={(e) => setEditImage4pFlipX(Boolean(e.target.checked))}
-                              className="accent-black"
-                            />
-                            Espelhar H
-                          </label>
-                        </div>
-
-                        <div className="flex items-end">
-                          <label className="flex items-center gap-2 text-xs font-medium">
-                            <input
-                              type="checkbox"
-                              checked={editImage4pFlipY}
-                              onChange={(e) => setEditImage4pFlipY(Boolean(e.target.checked))}
-                              className="accent-black"
-                            />
-                            Espelhar V
-                          </label>
+                          </div>
                         </div>
                       </div>
                     </div>
