@@ -59,7 +59,7 @@ exports.getHotspots = async (req, res) => {
 
 exports.updateHotspot = async (req, res) => {
   const { id } = req.params;
-  const { tipo, conteudo, x, y, z, icon_type, icon_color, hide_icon, custom_config } = req.body;
+  const { tipo, conteudo, x, y, z, icon_type, icon_color, hide_icon, placement, custom_config } = req.body;
 
   if (!tipo || typeof tipo !== "string") {
     return res.status(400).json({
@@ -108,6 +108,9 @@ exports.updateHotspot = async (req, res) => {
     }
     if (typeof hide_icon !== 'undefined') {
       hotspot.hide_icon = Boolean(hide_icon);
+    }
+    if (typeof placement !== 'undefined') {
+      hotspot.placement = placement;
     }
     if (typeof custom_config !== 'undefined') {
       hotspot.custom_config = custom_config;

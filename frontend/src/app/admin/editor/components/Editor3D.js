@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 //import { SplatMesh } from "three/examples/jsm/objects/SplatMesh.js"; // se tiver 3DGS
@@ -553,6 +554,33 @@ export default function Editor3D({ file, initialSettings, onSave }) {
 
       // lê como ArrayBuffer (necessário para binário)
       reader.readAsArrayBuffer(file);
+    } else if (ext === "obj") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (cancelled) return;
+        const contents = event.target.result; // string para OBJ
+        const loader = new OBJLoader();
+
+        try {
+          const object = loader.parse(contents);
+          // OBJLoader retorna um Group, vamos usar diretamente
+          setModel(object);
+          setLoading(false);
+        } catch (err) {
+          console.error("Erro ao carregar OBJ:", err);
+          setError("Erro: ficheiro OBJ invalido ou nao suportado.");
+          setLoading(false);
+        }
+      };
+
+      reader.onerror = () => {
+        if (cancelled) return;
+        setError("Nao foi possivel ler o ficheiro OBJ.");
+        setLoading(false);
+      };
+
+      // lê como texto
+      reader.readAsText(file);
     } else {
       setError("Formato nao suportado no editor 3D.");
       setLoading(false);

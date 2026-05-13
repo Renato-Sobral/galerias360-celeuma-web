@@ -405,9 +405,9 @@ export default function MediaSourceField({
     try {
       const uploaded = await uploadFileToMediaLibrary(file, destinationPath || currentPath);
       // uploaded é { name, originalName, size, mimeType, path, url }
-      // Criar selection com a URL retornada
+      // Criar selection com a URL retornada - usar source: "library" pois o ficheiro agora está na biblioteca
       const selection = {
-        source: "upload",
+        source: "library",
         path: uploaded.path,
         name: uploaded.originalName || uploaded.name,
         url: uploaded.url,
@@ -415,6 +415,7 @@ export default function MediaSourceField({
       onChange(selection);
       setPickerOpen(false);
     } catch (uploadError) {
+      console.error("❌ Erro no handleUploadFromDevice:", uploadError);
       setError(uploadError.message || "Erro ao fazer upload do ficheiro.");
     } finally {
       setUploading(false);

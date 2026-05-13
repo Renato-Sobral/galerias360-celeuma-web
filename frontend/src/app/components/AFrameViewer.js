@@ -429,11 +429,46 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     return { placement, isGround };
   };
 
+  const resolveModel3dSrc = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (!value) return "";
+
+    if (
+      value.startsWith("http://")
+      || value.startsWith("https://")
+      || value.startsWith("blob:")
+      || value.startsWith("data:")
+    ) {
+      return value;
+    }
+
+    const relFromUploads = relativePathFromUploadsUrl(value);
+    if (relFromUploads) {
+      return resolveUploadsUrl(relFromUploads) || value;
+    }
+
+    // Legacy/hand-entered values might already be relative to /uploads.
+    const looksLikeModelFile = /\.(glb|gltf|obj)(\?|#|$)/i.test(value);
+    if (looksLikeModelFile) {
+      const safeRel = value.replace(/^\/+/, "");
+      return resolveUploadsUrl(safeRel) || value;
+    }
+
+    return value;
+  };
+
   const encodeDestinationPointContent = (targetPontoId) => `${NAV_POINT_PREFIX}${targetPontoId}`;
   const encodeDestinationFileContent = (targetFilePath) => `${NAV_FILE_PREFIX}${targetFilePath}`;
   const encodeDestinationBackContent = () => NAV_BACK_VALUE;
 
-  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0, placement = "") => {
+  const normalizeModelOffset = (offset) => ({
+    x: toFiniteNumber(offset?.x, 0),
+    y: toFiniteNumber(offset?.y, 0),
+    z: toFiniteNumber(offset?.z, 0),
+  });
+
+  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0, placement = "", modelOffset = null) => {
+    const normalizedOffset = modelOffset ? normalizeModelOffset(modelOffset) : null;
     const payload = {
       value: String(rawValue || ""),
       view: String(viewPath || "").replace(/^\/+/, ""),
@@ -443,6 +478,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotYaw: Number.isFinite(Number(rotYaw)) ? Number(rotYaw) : 0,
       rotPitch: Number.isFinite(Number(rotPitch)) ? Number(rotPitch) : 0,
       placement: String(placement || ""),
+      ...(normalizedOffset ? { modelOffset: normalizedOffset } : {}),
     };
 
     try {
@@ -455,13 +491,14 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const decodeHotspotContent = (storedValue) => {
     const value = String(storedValue || "");
     if (!value.startsWith(HOTSPOT_META_PREFIX)) {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "" };
+      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "", modelOffset: { x: 0, y: 0, z: 0 } };
     }
 
     try {
       const encoded = value.slice(HOTSPOT_META_PREFIX.length);
       const json = decodeURIComponent(escape(atob(encoded)));
       const parsed = JSON.parse(json);
+      const modelOffset = normalizeModelOffset(parsed?.modelOffset);
       return {
         value: String(parsed?.value || ""),
         view: String(parsed?.view || "").replace(/^\/+/, ""),
@@ -471,9 +508,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         rotYaw: Number.isFinite(Number(parsed?.rotYaw)) ? Number(parsed.rotYaw) : 0,
         rotPitch: Number.isFinite(Number(parsed?.rotPitch)) ? Number(parsed.rotPitch) : 0,
         placement: String(parsed?.placement || ""),
+        modelOffset,
       };
     } catch {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "" };
+      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "", modelOffset: { x: 0, y: 0, z: 0 } };
     }
   };
 
@@ -726,6 +764,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [cameraAlignmentBase, setCameraAlignmentBase] = useState({ pitch: 0, yaw: 0 });
   const [editRadius, setEditRadius] = useState(DEFAULT_PANORAMA_DOME_RADIUS);
   const [editScale, setEditScale] = useState(1);
+  const [editModelOffsetX, setEditModelOffsetX] = useState(0);
+  const [editModelOffsetY, setEditModelOffsetY] = useState(0);
+  const [editModelOffsetZ, setEditModelOffsetZ] = useState(0);
   const [editPlacement, setEditPlacement] = useState("");
   const [editPontoDestino, setEditPontoDestino] = useState("");
   const [editNavigationSelection, setEditNavigationSelection] = useState(null);
@@ -1253,6 +1294,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         placement: String((editStickToGround ? "ground" : editPlacement) || hotspot.placement || ""),
         tipo: editTipo,
         conteudo: editConteudo,
+        model_offset: (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
+          ? { x: toFiniteNumber(editModelOffsetX, 0), y: toFiniteNumber(editModelOffsetY, 0), z: toFiniteNumber(editModelOffsetZ, 0) }
+          : (hotspot.model_offset || { x: 0, y: 0, z: 0 }),
         id_ponto_destino: "",
         navigation_file_path: "",
         navigation_file_url: "",
@@ -1272,6 +1316,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editYaw,
     editPitch,
     editScale,
+    editModelOffsetX,
+    editModelOffsetY,
+    editModelOffsetZ,
     editPlacement,
     editPontoDestino,
     editNavigationPath,
@@ -1322,125 +1369,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const THREE = window.THREE;
     if (!AFRAME || !THREE) return;
 
-    if (!AFRAME.components["inspect-3d"]) {
-      AFRAME.registerComponent("inspect-3d", {
-        schema: {
-          axis: { type: "string", default: "y" },
-          speed: { type: "number", default: 1 },
-          isInspecting: { type: "boolean", default: false }
-        },
-        init() {
-          this.baseRotation = new THREE.Euler().copy(this.el.object3D.rotation);
-          this.basePosition = new THREE.Vector3().copy(this.el.object3D.position);
-          this.baseScale = new THREE.Vector3().copy(this.el.object3D.scale);
-
-          this.dragRotation = new THREE.Euler(0, 0, 0);
-          this.isDragging = false;
-          this.previousMousePosition = { x: 0, y: 0 };
-
-          this.idleRotationOffset = 0;
-
-          this.onMouseDown = (e) => {
-            if (!this.data.isInspecting) return;
-            this.isDragging = true;
-            this.previousMousePosition.x = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-            this.previousMousePosition.y = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-          };
-          this.onMouseUp = () => { this.isDragging = false; };
-          this.onMouseMove = (e) => {
-            if (!this.isDragging || !this.data.isInspecting) return;
-            const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-            const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-
-            const deltaX = clientX - this.previousMousePosition.x;
-            const deltaY = clientY - this.previousMousePosition.y;
-
-            this.previousMousePosition = { x: clientX, y: clientY };
-
-            this.dragRotation.y += deltaX * 0.01;
-            this.dragRotation.x += deltaY * 0.01;
-          };
-
-          this.onMouseDownBound = this.onMouseDown.bind(this);
-          this.onMouseUpBound = this.onMouseUp.bind(this);
-          this.onMouseMoveBound = this.onMouseMove.bind(this);
-
-          window.addEventListener("mousedown", this.onMouseDownBound);
-          window.addEventListener("mouseup", this.onMouseUpBound);
-          window.addEventListener("mousemove", this.onMouseMoveBound);
-          window.addEventListener("touchstart", this.onMouseDownBound, { passive: true });
-          window.addEventListener("touchend", this.onMouseUpBound);
-          window.addEventListener("touchmove", this.onMouseMoveBound, { passive: true });
-        },
-        update(oldData) {
-          if (this.data.isInspecting !== oldData.isInspecting) {
-            const sceneEl = this.el.sceneEl;
-            if (!sceneEl || !sceneEl.camera) return;
-            const cameraEl = sceneEl.camera.el;
-
-            if (this.data.isInspecting) {
-              if (cameraEl.components["look-controls"]) {
-                cameraEl.setAttribute("look-controls", "enabled", false);
-              }
-              const cameraWorldPos = new THREE.Vector3();
-              const cameraWorldDir = new THREE.Vector3();
-              sceneEl.camera.getWorldPosition(cameraWorldPos);
-              sceneEl.camera.getWorldDirection(cameraWorldDir);
-
-              this.targetPosition = new THREE.Vector3().copy(cameraWorldPos).add(cameraWorldDir.multiplyScalar(2));
-              this.dragRotation.set(0, 0, 0);
-            } else {
-              if (cameraEl.components["look-controls"]) {
-                cameraEl.setAttribute("look-controls", "enabled", true);
-              }
-              this.targetPosition = new THREE.Vector3().copy(this.basePosition);
-              this.idleRotationOffset = 0;
-            }
-          }
-        },
-        tick(time, timeDelta) {
-          if (!this.targetPosition) this.targetPosition = new THREE.Vector3().copy(this.basePosition);
-
-          if (this.data.isInspecting) {
-            this.el.object3D.position.lerp(this.targetPosition, 0.05);
-
-            // Smooth rotation targeting based on drag
-            const targetEuler = new THREE.Euler(
-              this.baseRotation.x + this.dragRotation.x,
-              this.baseRotation.y + this.dragRotation.y,
-              this.baseRotation.z + this.dragRotation.z
-            );
-
-            this.el.object3D.rotation.x += (targetEuler.x - this.el.object3D.rotation.x) * 0.1;
-            this.el.object3D.rotation.y += (targetEuler.y - this.el.object3D.rotation.y) * 0.1;
-            this.el.object3D.rotation.z += (targetEuler.z - this.el.object3D.rotation.z) * 0.1;
-
-          } else {
-            this.el.object3D.position.lerp(this.basePosition, 0.05);
-            const rSpeed = this.data.speed * (timeDelta / 1000) || 0;
-            this.idleRotationOffset += rSpeed;
-
-            const targetEuler = new THREE.Euler().copy(this.baseRotation);
-            if (this.data.axis === 'x') targetEuler.x += this.idleRotationOffset;
-            else if (this.data.axis === 'z') targetEuler.z += this.idleRotationOffset;
-            else targetEuler.y += this.idleRotationOffset;
-
-            this.el.object3D.rotation.x += (targetEuler.x - this.el.object3D.rotation.x) * 0.1;
-            this.el.object3D.rotation.y += (targetEuler.y - this.el.object3D.rotation.y) * 0.1;
-            this.el.object3D.rotation.z += (targetEuler.z - this.el.object3D.rotation.z) * 0.1;
-          }
-        },
-        remove() {
-          window.removeEventListener("mousedown", this.onMouseDownBound);
-          window.removeEventListener("mouseup", this.onMouseUpBound);
-          window.removeEventListener("mousemove", this.onMouseMoveBound);
-          window.removeEventListener("touchstart", this.onMouseDownBound);
-          window.removeEventListener("touchend", this.onMouseUpBound);
-          window.removeEventListener("touchmove", this.onMouseMoveBound);
-        }
-      });
-    }
-
     if (!AFRAME.components["face-camera"]) {
       AFRAME.registerComponent("face-camera", {
         init() {
@@ -1451,172 +1379,6 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           if (!scene?.camera) return;
           scene.camera.getWorldPosition(this.cameraWorldPosition);
           this.el.object3D.lookAt(this.cameraWorldPosition);
-        },
-      });
-    }
-
-    if (!AFRAME.components["center-model-pivot"]) {
-      AFRAME.registerComponent("center-model-pivot", {
-        init() {
-          this.boundingBox = new THREE.Box3();
-          this.center = new THREE.Vector3();
-          this.appliedOffset = new THREE.Vector3();
-          this.recenter = this.recenter.bind(this);
-          this.el.addEventListener("model-loaded", this.recenter);
-          this.recenter();
-        },
-        recenter() {
-          const mesh = this.el.getObject3D("mesh");
-          if (!mesh) return;
-
-          // Remove previous offset before recalculating to avoid cumulative drift.
-          mesh.position.add(this.appliedOffset);
-          this.boundingBox.setFromObject(mesh);
-          if (this.boundingBox.isEmpty()) {
-            this.appliedOffset.set(0, 0, 0);
-            return;
-          }
-
-          this.boundingBox.getCenter(this.center);
-          this.appliedOffset.copy(this.center);
-          mesh.position.sub(this.center);
-        },
-        remove() {
-          this.el.removeEventListener("model-loaded", this.recenter);
-        },
-      });
-    }
-
-    if (!AFRAME.components["ground-model-on-dome"]) {
-      AFRAME.registerComponent("ground-model-on-dome", {
-        schema: {
-          centerY: { type: "number", default: 0 },
-          inset: { type: "number", default: 1.5 },
-          contactShadow: { type: "number", default: DEFAULT_MODEL_CONTACT_SHADOW_OPACITY },
-        },
-        init() {
-          this.boundingBox = new THREE.Box3();
-          this.size = new THREE.Vector3();
-          this.parentWorld = new THREE.Vector3();
-          this.center = new THREE.Vector3();
-          this.inward = new THREE.Vector3();
-          this.contactShadowMesh = null;
-          this.applyGrounding = this.applyGrounding.bind(this);
-          this.el.addEventListener("model-loaded", this.applyGrounding);
-          this.applyGrounding();
-        },
-        remove() {
-          this.el.removeEventListener("model-loaded", this.applyGrounding);
-          disposeContactShadowMesh(this.contactShadowMesh);
-          this.contactShadowMesh = null;
-        },
-        applyGrounding() {
-          const mesh = this.el.getObject3D("mesh");
-          if (!mesh) return;
-
-          mesh.updateMatrixWorld(true);
-          this.boundingBox.setFromObject(mesh);
-          if (this.boundingBox.isEmpty()) return;
-
-          this.boundingBox.getSize(this.size);
-
-          const radius = Math.max(this.size.x, this.size.z) * 0.5;
-          const contactShadowRadius = Math.max(MODEL_CONTACT_SHADOW_MIN_RADIUS, radius * MODEL_CONTACT_SHADOW_DOME_SCALE);
-          const contactShadowOpacity = clamp01(
-            this.data.contactShadow,
-            DEFAULT_MODEL_CONTACT_SHADOW_OPACITY
-          );
-          this.contactShadowMesh = applyContactShadow({
-            THREE,
-            entityObject3D: this.el.object3D,
-            mesh: this.contactShadowMesh,
-            opacity: contactShadowOpacity,
-            radius: contactShadowRadius,
-          });
-
-          const parentObject = this.el.parentEl?.object3D;
-          if (parentObject) {
-            parentObject.getWorldPosition(this.parentWorld);
-          } else {
-            this.el.object3D.getWorldPosition(this.parentWorld);
-          }
-
-          this.center.set(0, Number(this.data.centerY) || 0, 0);
-          this.inward.subVectors(this.center, this.parentWorld);
-          if (this.inward.lengthSq() < 1e-6) {
-            this.inward.set(0, 1, 0);
-          } else {
-            this.inward.normalize();
-          }
-
-          this.el.object3D.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.inward);
-
-          const inwardInset = Math.max(0, Number(this.data.inset) || 0);
-          this.el.object3D.position.set(0, inwardInset, 0);
-
-          applyModelShadowFlags(mesh);
-        },
-      });
-    }
-
-    if (!AFRAME.components["ground-model-on-floor"]) {
-      AFRAME.registerComponent("ground-model-on-floor", {
-        schema: {
-          contactShadow: { type: "number", default: DEFAULT_MODEL_CONTACT_SHADOW_OPACITY },
-        },
-        init() {
-          this.boundingBox = new THREE.Box3();
-          this.center = new THREE.Vector3();
-          this.size = new THREE.Vector3();
-          this.appliedOffset = new THREE.Vector3();
-          this.contactShadowMesh = null;
-          this.applyGrounding = this.applyGrounding.bind(this);
-          this.el.addEventListener("model-loaded", this.applyGrounding);
-          this.applyGrounding();
-        },
-        remove() {
-          this.el.removeEventListener("model-loaded", this.applyGrounding);
-          disposeContactShadowMesh(this.contactShadowMesh);
-          this.contactShadowMesh = null;
-        },
-        applyGrounding() {
-          const mesh = this.el.getObject3D("mesh");
-          if (!mesh) return;
-
-          // Remove previous offset before recalculating to avoid cumulative drift.
-          mesh.position.add(this.appliedOffset);
-          this.appliedOffset.set(0, 0, 0);
-
-          mesh.updateMatrixWorld(true);
-          this.boundingBox.setFromObject(mesh);
-          if (this.boundingBox.isEmpty()) return;
-
-          this.boundingBox.getCenter(this.center);
-          this.boundingBox.getSize(this.size);
-          const minY = this.boundingBox.min.y;
-
-          // Pivot at the model base center.
-          mesh.position.x -= this.center.x;
-          mesh.position.z -= this.center.z;
-          mesh.position.y -= minY;
-
-          this.appliedOffset.set(this.center.x, minY, this.center.z);
-
-          const radius = Math.max(this.size.x, this.size.z) * 0.5;
-          const contactShadowRadius = Math.max(MODEL_CONTACT_SHADOW_MIN_RADIUS, radius * MODEL_CONTACT_SHADOW_GROUND_SCALE);
-          const contactShadowOpacity = clamp01(
-            this.data.contactShadow,
-            DEFAULT_MODEL_CONTACT_SHADOW_OPACITY
-          );
-          this.contactShadowMesh = applyContactShadow({
-            THREE,
-            entityObject3D: this.el.object3D,
-            mesh: this.contactShadowMesh,
-            opacity: contactShadowOpacity,
-            radius: contactShadowRadius,
-          });
-
-          applyModelShadowFlags(mesh);
         },
       });
     }
@@ -2292,25 +2054,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   };
 
   const renderModelo3dHotspot = (conteudo, hotspot) => {
-    const currentFloorY = floorY;
-    const { isGround } = getModelHotspotPlacement(hotspot, currentFloorY);
+    const modelSrc = resolveModel3dSrc(conteudo);
+    const modelOffset = normalizeModelOffset(hotspot?.model_offset);
 
-    const groundingAttributes = isGround
-      ? { "ground-model-on-floor": "contactShadow: 0" }
-      : {
-        "center-model-pivot": "",
-        "ground-model-on-dome": `centerY: ${currentFloorY}; inset: 1.6; contactShadow: ${DEFAULT_MODEL_CONTACT_SHADOW_OPACITY}`,
-      };
+    const modelToUse = modelSrc || conteudo;
+    const isOBJ = String(modelToUse || "").toLowerCase().split("?")[0].split("#")[0].endsWith(".obj");
+
+    const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), hotspot);
 
     return (
-      <a-entity
-        gltf-model={conteudo}
-        position={defaultModelTransformProps.position}
-        rotation={defaultModelTransformProps.rotation}
-        scale={defaultModelTransformProps.scale}
-        shadow="cast: true; receive: true"
-        {...groundingAttributes}
-      />
+      <a-entity key={`model-${conteudo}`}>
+        <a-entity
+          key={`model-wrap-${conteudo}`}
+          position={`${modelOffset.x} ${modelOffset.y} ${modelOffset.z}`}
+        >
+          <a-entity
+            key={`model-entity-${conteudo}`}
+            {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
+            position="0 0 0"
+            rotation="0 0 0"
+            scale="1 1 1"
+            shadow="cast: true; receive: true"
+          />
+        </a-entity>
+        {hotspotIcon && !(hotspot?.hide_icon && !canManageHotspots) && (
+          <a-entity key={`icon-${conteudo}`}>
+            {hotspotIcon}
+          </a-entity>
+        )}
+      </a-entity>
     );
   };
 
@@ -2433,33 +2205,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     modelo3d: (conteudo, hotspot) => renderModelo3dHotspot(conteudo, hotspot),
 
     modelo3d_inspect: (conteudo, hotspot) => {
-      const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), hotspot);
-      if (hotspotIcon) return hotspotIcon;
-
       const payload = decodeInspect3dValue(conteudo);
-      if (!payload) return null;
-      const currentFloorY = floorY;
-      const { isGround } = getModelHotspotPlacement(hotspot, currentFloorY);
+      const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), hotspot);
       const isInspecting = inspectModeHotspotId === hotspot.id;
+      const modelOffset = normalizeModelOffset(hotspot?.model_offset);
 
-      const groundingAttributes = isGround
-        ? { "ground-model-on-floor": "contactShadow: 0" }
-        : {
-          "center-model-pivot": "",
-          "ground-model-on-dome": `centerY: ${currentFloorY}; inset: 1.6; contactShadow: ${DEFAULT_MODEL_CONTACT_SHADOW_OPACITY}`,
-        };
+      if (!isInspecting) {
+        if (hotspot?.hide_icon && !canManageHotspots) return null;
+        return hotspotIcon;
+      }
+
+      if (!payload) return null;
+      const modelSrc = resolveModel3dSrc(payload.src);
+      const modelToUse = modelSrc || payload.src;
+      const isOBJ = String(modelToUse || "").toLowerCase().split("?")[0].split("#")[0].endsWith(".obj");
 
       return (
         <a-entity
-          gltf-model={payload.src}
-          position={defaultModelTransformProps.position}
-          rotation={defaultModelTransformProps.rotation}
-          scale={defaultModelTransformProps.scale}
-          shadow="cast: true; receive: true"
-          inspect-3d={`axis: ${payload.axis}; speed: ${payload.rotationSpeed}; isInspecting: ${isInspecting}`}
-          class="clickable"
-          {...groundingAttributes}
-        />
+          key={`inspect-wrap-${modelToUse}-${isInspecting}`}
+          position={`${modelOffset.x} ${modelOffset.y} ${modelOffset.z}`}
+        >
+          <a-entity
+            key={`inspect-${modelToUse}-${isInspecting}`}
+            {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
+            position="0 0 0"
+            rotation="0 0 0"
+            scale="1 1 1"
+            shadow="cast: true; receive: true"
+          />
+        </a-entity>
       );
     },
 
@@ -2530,6 +2304,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           const decodedContent = decodeHotspotContent(h.conteudo || "");
           const navigation = decodeNavigationContent(h.tipo || "", h.conteudo || "");
           const isNavigation = navigation.mode === "point" || navigation.mode === "file" || navigation.mode === "back";
+          const modelOffset = normalizeModelOffset(decodedContent.modelOffset);
           return {
             id: h.id_hotspot,
             id_hotspot: h.id_hotspot,
@@ -2539,9 +2314,10 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             scale: decodedContent.scale || 1,
             rot_yaw: decodedContent.rotYaw || 0,
             rot_pitch: decodedContent.rotPitch || 0,
-            placement: String(decodedContent.placement || ""),
+            placement: String(decodedContent.placement || h.placement || ""),
             tipo: isNavigation ? "navegacao" : (h.tipo === "modelo3d" && decodedContent.value.startsWith(INSPECT3D_PREFIX) ? "modelo3d_inspect" : (h.tipo || "")),
             conteudo: isNavigation ? "" : decodedContent.value,
+            model_offset: modelOffset,
             view_path: decodedContent.view,
             navigation_mode: navigation.mode,
             id_ponto_destino: navigation.pointId,
@@ -3386,6 +3162,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           placement,
           tipo: hotspotCriado.tipo || "",
           conteudo: hotspotCriado.conteudo || "",
+          model_offset: { x: 0, y: 0, z: 0 },
           view_path: activeViewPath,
           navigation_mode: null,
           id_ponto_destino: "",
@@ -3409,6 +3186,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditYaw(Number(hotspotEditavel.rot_yaw) || 0);
         setEditPitch(Number(hotspotEditavel.rot_pitch) || 0);
         setEditScale(Number(hotspotEditavel.scale) || 1);
+        setEditModelOffsetX(0);
+        setEditModelOffsetY(0);
+        setEditModelOffsetZ(0);
         setEditPlacement(String(hotspotEditavel.placement || ""));
         setEditStickToGround(String(hotspotEditavel.placement || "") === "ground");
         setEditHideIcon(Boolean(hotspotEditavel.hide_icon));
@@ -3598,26 +3378,38 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
     if (editTipo === "modelo3d") {
       if (editModelSelection) {
-        const resolvedModel = await resolveMediaSelection(editModelSelection, "modelos3d");
-        const resolvedModelUrl = resolvedModel?.url || resolveUploadsUrl(resolvedModel?.path || "");
+        try {
+          const resolvedModel = await resolveMediaSelection(editModelSelection, "modelos3d");
+          console.log("🔍 Modelo 3D resolvido:", { selection: editModelSelection, resolved: resolvedModel });
+          
+          if (!resolvedModel) {
+            throw new Error("Seleção de modelo inválida (nenhuma resolução retornada)");
+          }
+          
+          const resolvedModelUrl = resolvedModel.url || resolveUploadsUrl(resolvedModel.path || "");
+          console.log("🔗 URL final do modelo:", resolvedModelUrl);
 
-        if (!resolvedModelUrl) {
+          if (!resolvedModelUrl) {
+            throw new Error(`Não foi possível gerar URL: path="${resolvedModel.path}", url="${resolvedModel.url}"`);
+          }
+
+          finalConteudoRaw = resolvedModelUrl;
+        } catch (error) {
+          console.error("❌ Erro ao resolver modelo 3D:", error);
           Swal.fire({
             title: "Modelo inválido",
-            text: "Não foi possível resolver o ficheiro 3D selecionado.",
+            text: error.message || "Não foi possível resolver o ficheiro 3D selecionado.",
             icon: "warning",
             confirmButtonColor: "#171717",
           });
           return;
         }
-
-        finalConteudoRaw = resolvedModelUrl;
       }
 
       if (!String(finalConteudoRaw || "").trim()) {
         Swal.fire({
           title: "Modelo em falta",
-          text: "Seleciona ou faz upload de um ficheiro GLB/GLTF para o hotspot de modelo 3D.",
+          text: "Seleciona ou faz upload de um ficheiro GLB/GLTF/OBJ para o hotspot de modelo 3D.",
           icon: "warning",
           confirmButtonColor: "#171717",
         });
@@ -3628,26 +3420,38 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     if (editTipo === "modelo3d_inspect") {
       let finalModelSrc = editInspect3dSrc;
       if (editModelSelection) {
-        const resolvedModel = await resolveMediaSelection(editModelSelection, "modelos3d");
-        const resolvedModelUrl = resolvedModel?.url || resolveUploadsUrl(resolvedModel?.path || "");
+        try {
+          const resolvedModel = await resolveMediaSelection(editModelSelection, "modelos3d");
+          console.log("🔍 Modelo 3D (inspect) resolvido:", { selection: editModelSelection, resolved: resolvedModel });
+          
+          if (!resolvedModel) {
+            throw new Error("Seleção de modelo inválida (nenhuma resolução retornada)");
+          }
+          
+          const resolvedModelUrl = resolvedModel.url || resolveUploadsUrl(resolvedModel.path || "");
+          console.log("🔗 URL final do modelo (inspect):", resolvedModelUrl);
 
-        if (!resolvedModelUrl) {
+          if (!resolvedModelUrl) {
+            throw new Error(`Não foi possível gerar URL: path="${resolvedModel.path}", url="${resolvedModel.url}"`);
+          }
+
+          finalModelSrc = resolvedModelUrl;
+        } catch (error) {
+          console.error("❌ Erro ao resolver modelo 3D (inspect):", error);
           Swal.fire({
             title: "Modelo inválido",
-            text: "Não foi possível resolver o ficheiro 3D selecionado.",
+            text: error.message || "Não foi possível resolver o ficheiro 3D selecionado.",
             icon: "warning",
             confirmButtonColor: "#171717",
           });
           return;
         }
-
-        finalModelSrc = resolvedModelUrl;
       }
 
       if (!String(finalModelSrc || "").trim()) {
         Swal.fire({
           title: "Modelo em falta",
-          text: "Seleciona ou faz upload de um ficheiro GLB/GLTF para o hotspot de inspeção 3D.",
+          text: "Seleciona ou faz upload de um ficheiro GLB/GLTF/OBJ para o hotspot de inspeção 3D.",
           icon: "warning",
           confirmButtonColor: "#171717",
         });
@@ -3741,8 +3545,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       });
     }
 
-    const finalPlacement = editStickToGround ? "ground" : String(editPlacement || selectedHotspot.placement || "");
-    const finalConteudo = encodeHotspotContent(finalConteudoRaw, activeViewPath, editScale, editYaw, editPitch, finalPlacement);
+    const finalPlacement = editStickToGround ? "ground" : editPlacement;
+    const finalModelOffset = (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
+      ? { x: toFiniteNumber(editModelOffsetX, 0), y: toFiniteNumber(editModelOffsetY, 0), z: toFiniteNumber(editModelOffsetZ, 0) }
+      : null;
+    const finalConteudo = encodeHotspotContent(finalConteudoRaw, activeViewPath, editScale, editYaw, editPitch, finalPlacement, finalModelOffset);
     const finalX = Number(editX);
     const finalY = editStickToGround ? floorY : Number(editY);
     const finalZ = Number(editZ);
@@ -3760,6 +3567,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           x: finalX,
           y: finalY,
           z: finalZ,
+          placement: finalPlacement,
           hide_icon: Boolean(editHideIcon),
           custom_config: editCustomConfig?.enabled ? editCustomConfig : { enabled: false },
         }),
@@ -3784,6 +3592,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         rot_pitch: Number(editPitch) || 0,
         scale: Number(editScale),
         placement: finalPlacement,
+        model_offset: finalModelOffset ? normalizeModelOffset(finalModelOffset) : (selectedHotspot?.model_offset || { x: 0, y: 0, z: 0 }),
         navigation_mode: editTipo === "navegacao" ? editNavigationMode : null,
         id_ponto_destino: finalPontoDestino,
         navigation_file_path: finalNavigationPath,
@@ -4289,18 +4098,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   setEditYaw(Number(selectedHotspot.rot_yaw) || 0);
                   setEditPitch(Number(selectedHotspot.rot_pitch) || 0);
                   setEditScale(Number(selectedHotspot.scale) || 1);
-                  setEditPlacement(
-                    String(
-                      selectedHotspot.placement
-                      || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "")
-                    )
+                  const loadedModelOffset = normalizeModelOffset(selectedHotspot.model_offset);
+                  setEditModelOffsetX(loadedModelOffset.x);
+                  setEditModelOffsetY(loadedModelOffset.y);
+                  setEditModelOffsetZ(loadedModelOffset.z);
+                  const placement = String(
+                    selectedHotspot.placement
+                    || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "dome")
                   );
-                  setEditStickToGround(
-                    String(
-                      selectedHotspot.placement
-                      || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "")
-                    ) === "ground"
-                  );
+                  setEditPlacement(placement);
+                  setEditStickToGround(placement === "ground");
                   setEditModelSelection(
                     selectedHotspot.tipo === "modelo3d" && relativePathFromUploadsUrl(selectedHotspot.conteudo || "")
                       ? createLibrarySelection(relativePathFromUploadsUrl(selectedHotspot.conteudo || ""))
@@ -4690,8 +4497,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                 <label className="text-sm font-medium">Conteúdo:</label>
                 {editTipo === "modelo3d" ? (
                   <MediaSourceField
-                    label="Modelo 3D (GLB/GLTF)"
-                    accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
+                    label="Modelo 3D (GLB/GLTF/OBJ)"
+                    accept=".glb,.gltf,.obj,model/gltf+json,model/gltf-binary"
                     selection={editModelSelection}
                     onChange={(selection) => {
                       setEditModelSelection(selection);
@@ -4708,13 +4515,13 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       setEditConteudo(selection.file?.name || "");
                     }}
                     destinationPath="modelos3d"
-                    helperText="Escolhe ou envia um ficheiro GLB/GLTF no File Manager para importar no A-Frame."
+                    helperText="Escolhe ou envia um ficheiro GLB/GLTF/OBJ no File Manager para importar no A-Frame."
                   />
                 ) : editTipo === "modelo3d_inspect" ? (
                   <div className="flex flex-col gap-2">
                     <MediaSourceField
-                      label="Modelo 3D Inspeção (GLB/GLTF)"
-                      accept=".glb,.gltf,model/gltf+json,model/gltf-binary"
+                      label="Modelo 3D Inspeção (GLB/GLTF/OBJ)"
+                      accept=".glb,.gltf,.obj,model/gltf+json,model/gltf-binary"
                       selection={editModelSelection}
                       onChange={(selection) => {
                         setEditModelSelection(selection);
@@ -5141,6 +4948,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       setEditStickToGround(enabled);
                       if (enabled) {
                         setPositionAndAnglesFromXYZ(editX, floorY, editZ);
+                        setEditPlacement("ground");
+                      } else {
+                        setEditPlacement("dome");
                       }
                     }}
                     className="accent-black"
@@ -5197,6 +5007,35 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     step={0.05}
                   />
                 </div>
+
+                {(editTipo === "modelo3d" || editTipo === "modelo3d_inspect") && (
+                  <div className="rounded border border-black/10 p-2 mt-1">
+                    <div className="text-xs font-semibold text-black/70 mb-2">Posição do objeto (offset)</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <DragNumberInput
+                        label="Obj X"
+                        value={Number(editModelOffsetX) || 0}
+                        onChange={(next) => setEditModelOffsetX(next)}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="Obj Y"
+                        value={Number(editModelOffsetY) || 0}
+                        onChange={(next) => setEditModelOffsetY(next)}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="Obj Z"
+                        value={Number(editModelOffsetZ) || 0}
+                        onChange={(next) => setEditModelOffsetZ(next)}
+                        step={0.1}
+                      />
+                    </div>
+                    <div className="mt-2 text-[11px] text-neutral-600">
+                      Move só o modelo 3D dentro do hotspot (o ícone não muda). A posição do hotspot continua a mover ambos.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

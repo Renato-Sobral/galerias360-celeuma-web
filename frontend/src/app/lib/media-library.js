@@ -90,49 +90,90 @@ export async function fetchMediaTree() {
 }
 
 export async function uploadFileToMediaLibrary(file, destinationPath = "") {
+  if (!file) {
+    throw new Error("Ficheiro não fornecido");
+  }
+
+  if (file.size > 250 * 1024 * 1024) {
+    throw new Error(`Ficheiro demasiado grande (${(file.size / (1024 * 1024)).toFixed(1)}MB). Limite: 250MB`);
+  }
+
+  console.log("📤 Upload iniciado:", { fileName: file.name, size: `${(file.size / 1024).toFixed(0)}KB`, destination: destinationPath });
+
   const formData = new FormData();
   formData.append("destinationPath", destinationPath);
   formData.append("files", file);
 
-  const response = await fetch(getMediaApiUrl("/media/upload"), {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: formData,
-  });
+  try {
+    const response = await fetch(getMediaApiUrl("/media/upload"), {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: formData,
+    });
 
-  const payload = await response.json().catch(() => null);
-  
-  if (!response.ok || !payload?.success || !payload.files?.[0]) {
-    const errorMsg = payload?.message || "Erro ao enviar ficheiro para o File Manager.";
-    throw new Error(errorMsg);
+    const payload = await response.json().catch((err) => {
+      throw new Error("Resposta do servidor não é JSON válido");
+    });
+    
+    if (!response.ok) {
+      throw new Error(payload?.message || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    if (!payload?.success) {
+      throw new Error(payload?.message || "Upload retornou success=false");
+    }
+
+    if (!payload.files?.[0]) {
+      throw new Error("Nenhum ficheiro retornado no upload");
+    }
+
+    const uploaded = payload.files[0];
+    console.log("✅ Upload concluído:", { path: uploaded.path, url: resolveUploadsUrl(uploaded.path) });
+    
+    return {
+      path: uploaded.path,
+      name: uploaded.name || uploaded.originalName,
+      originalName: uploaded.originalName,
+      url: resolveUploadsUrl(uploaded.path),
+      mimeType: uploaded.mimeType || file.type,
+    };
+  } catch (error) {
+    console.error("❌ Erro no upload:", error.message);
+    throw error;
   }
-
-  const uploaded = payload.files[0];
-  return {
-    path: uploaded.path,
-    name: uploaded.name || uploaded.originalName,
-    originalName: uploaded.originalName,
-    url: resolveUploadsUrl(uploaded.path),
-    mimeType: uploaded.mimeType || file.type,
-  };
 }
 
 export async function resolveMediaSelection(selection, destinationPath = "") {
-  if (!selection) return null;
+  if (!selection) {
+    console.warn("⚠️ resolveMediaSelection: selection é null");
+    return null;
+  }
+
+  console.log("🔄 resolveMediaSelection:", { source: selection.source, hasPath: !!selection.path, hasFile: !!selection.file, destinationPath });
 
   if (selection.source === "library" && selection.path) {
-    return {
+    const result = {
       path: selection.path,
       name: selection.name || selection.path.split("/").pop() || selection.path,
       url: selection.url || resolveUploadsUrl(selection.path),
       mimeType: selection.mimeType || "",
     };
+    console.log("✅ Library selection resolvida:", result);
+    return result;
   }
 
   if (selection.source === "device" && selection.file) {
-    return uploadFileToMediaLibrary(selection.file, destinationPath);
+    try {
+      const result = await uploadFileToMediaLibrary(selection.file, destinationPath);
+      console.log("✅ Device upload resolvido:", result);
+      return result;
+    } catch (error) {
+      console.error("❌ Erro no resolveMediaSelection (device):", error);
+      throw error;
+    }
   }
 
+  console.warn("⚠️ resolveMediaSelection: source não reconhecido ou ficheiro em falta", selection);
   return null;
 }
 

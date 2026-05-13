@@ -52,6 +52,10 @@ const Hotspot = sequelize.define('hotspots', {
     allowNull: false,
     defaultValue: false,
   },
+  placement: {
+    type: DataTypes.ENUM('ground', 'dome'),
+    allowNull: true,
+  },
   custom_config: {
     type: DataTypes.JSON,
     allowNull: true,

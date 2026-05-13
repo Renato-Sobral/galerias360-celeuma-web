@@ -44,7 +44,7 @@ export default function EditorPage() {
         setAssetPath(resolved.path || "");
 
         const ext = selectedFile.name.split(".").pop().toLowerCase();
-        if (["gltf", "glb", "ply", "splat"].includes(ext)) {
+        if (["gltf", "glb", "ply", "obj", "splat"].includes(ext)) {
           setFileType("3d");
         } else if (["jpg", "jpeg", "png", "hdr", "exr"].includes(ext)) {
           setFileType("360");
@@ -173,7 +173,7 @@ export default function EditorPage() {
                     Edite panoramas 360 e modelos 3D com ajustes de transformacao, luz e cor.
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Formatos suportados: .jpg, .jpeg, .png, .hdr, .exr, .gltf, .glb, .ply, .splat
+                    Formatos suportados: .jpg, .jpeg, .png, .hdr, .exr, .gltf, .glb, .obj, .ply, .splat
                   </p>
                 </div>
                 {file && (
@@ -202,7 +202,7 @@ export default function EditorPage() {
               <div className="max-w-3xl space-y-2">
                 <MediaSourceField
                   label="Ficheiro para editar"
-                  accept="image/*,.hdr,.exr,.gltf,.glb,.ply,.splat"
+                  accept="image/*,.hdr,.exr,.gltf,.glb,.obj,.ply,.splat"
                   selection={selection}
                   onChange={setSelection}
                   destinationPath="editor"
