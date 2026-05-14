@@ -123,17 +123,17 @@ export default function PontoDetail() {
       {/* Viewer */}
       <div className="flex-1 overflow-hidden relative">
         {/* Top bar with back button and info */}
-        <div className="absolute top-4 left-4 z-[60] flex items-center gap-3">
+        <div className="absolute top-4 left-4 z-[60] flex items-center gap-2 sm:gap-3">
           <Button
             variant="outline"
             size="icon"
             onClick={() => router.back()}
-            className="bg-background/80 backdrop-blur-sm border-border hover:bg-background/90 shrink-0"
+            className="h-12 w-12 shrink-0 bg-background/80 backdrop-blur-sm border-border hover:bg-background/90"
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
 
-          <div className="bg-background/80 backdrop-blur-sm border border-border rounded-md px-3 py-2 max-w-xs">
+          <div className="flex h-12 max-w-xs items-center bg-background/80 backdrop-blur-sm border border-border rounded-md px-4">
             <p className="text-sm font-semibold truncate text-foreground">
               {ponto.name}
             </p>

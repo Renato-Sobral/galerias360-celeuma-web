@@ -111,7 +111,7 @@ io.on("connection", (socket) => {
 });
 
 async function bootstrap() {
-  const shouldAlterSchema = process.env.SEQUELIZE_SYNC_ALTER === "true";
+  const shouldAlterSchema = process.env.SEQUELIZE_SYNC_ALTER === "true" || process.env.NODE_ENV !== "production";
   await sequelize.sync(shouldAlterSchema ? { alter: true } : undefined);
   console.log(`✅ Tabelas sincronizadas com sucesso! (alter=${shouldAlterSchema})`);
 

@@ -467,8 +467,17 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     z: toFiniteNumber(offset?.z, 0),
   });
 
-  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0, placement = "", modelOffset = null) => {
+  const normalizeModelScale = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(0.01, parsed);
+  };
+
+  const encodeHotspotContent = (rawValue, viewPath, scale = 1, rotYaw = 0, rotPitch = 0, placement = "", modelOffset = null, modelScale = null, inspectModelOffset = null, inspectModelScale = null) => {
     const normalizedOffset = modelOffset ? normalizeModelOffset(modelOffset) : null;
+    const normalizedModelScale = modelScale == null ? null : normalizeModelScale(modelScale);
+    const normalizedInspectOffset = inspectModelOffset ? normalizeModelOffset(inspectModelOffset) : null;
+    const normalizedInspectModelScale = inspectModelScale == null ? null : normalizeModelScale(inspectModelScale);
     const payload = {
       value: String(rawValue || ""),
       view: String(viewPath || "").replace(/^\/+/, ""),
@@ -479,6 +488,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       rotPitch: Number.isFinite(Number(rotPitch)) ? Number(rotPitch) : 0,
       placement: String(placement || ""),
       ...(normalizedOffset ? { modelOffset: normalizedOffset } : {}),
+      ...(normalizedModelScale != null ? { modelScale: normalizedModelScale } : {}),
+      ...(normalizedInspectOffset ? { inspectModelOffset: normalizedInspectOffset } : {}),
+      ...(normalizedInspectModelScale != null ? { inspectModelScale: normalizedInspectModelScale } : {}),
     };
 
     try {
@@ -491,7 +503,18 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const decodeHotspotContent = (storedValue) => {
     const value = String(storedValue || "");
     if (!value.startsWith(HOTSPOT_META_PREFIX)) {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "", modelOffset: { x: 0, y: 0, z: 0 } };
+      return {
+        value,
+        view: "",
+        scale: 1,
+        rotYaw: 0,
+        rotPitch: 0,
+        placement: "",
+        modelOffset: { x: 0, y: 0, z: 0 },
+        modelScale: 1,
+        inspectModelOffset: { x: 0, y: 0, z: 0 },
+        inspectModelScale: 1,
+      };
     }
 
     try {
@@ -499,6 +522,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       const json = decodeURIComponent(escape(atob(encoded)));
       const parsed = JSON.parse(json);
       const modelOffset = normalizeModelOffset(parsed?.modelOffset);
+      const modelScale = normalizeModelScale(parsed?.modelScale);
+      const inspectModelOffset = normalizeModelOffset(parsed?.inspectModelOffset ?? parsed?.modelOffset);
+      const inspectModelScale = normalizeModelScale(parsed?.inspectModelScale ?? parsed?.modelScale);
       return {
         value: String(parsed?.value || ""),
         view: String(parsed?.view || "").replace(/^\/+/, ""),
@@ -509,9 +535,23 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         rotPitch: Number.isFinite(Number(parsed?.rotPitch)) ? Number(parsed.rotPitch) : 0,
         placement: String(parsed?.placement || ""),
         modelOffset,
+        modelScale,
+        inspectModelOffset,
+        inspectModelScale,
       };
     } catch {
-      return { value, view: "", scale: 1, rotYaw: 0, rotPitch: 0, placement: "", modelOffset: { x: 0, y: 0, z: 0 } };
+      return {
+        value,
+        view: "",
+        scale: 1,
+        rotYaw: 0,
+        rotPitch: 0,
+        placement: "",
+        modelOffset: { x: 0, y: 0, z: 0 },
+        modelScale: 1,
+        inspectModelOffset: { x: 0, y: 0, z: 0 },
+        inspectModelScale: 1,
+      };
     }
   };
 
@@ -659,7 +699,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const safePayload = {
       src: String(payload?.src || ""),
       rotationSpeed: Number.isFinite(Number(payload?.rotationSpeed)) ? Number(payload.rotationSpeed) : 1,
-      axis: ["x", "y", "z"].includes(payload?.axis) ? payload.axis : "y",
+      axis: (payload?.axis && typeof payload.axis === 'object') ? payload.axis : { x: false, y: true, z: false },
+      autoRotate: Boolean(payload?.autoRotate),
       buttons: Array.isArray(payload?.buttons) ? payload.buttons : [],
     };
 
@@ -678,10 +719,22 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       const encoded = value.slice(INSPECT3D_PREFIX.length);
       const json = decodeURIComponent(escape(atob(encoded)));
       const parsed = JSON.parse(json);
+      
+      // Normalizar axis (pode ser string legacy ou novo objeto booleano)
+      let axisObj = { x: false, y: true, z: false };
+      if (parsed?.axis && typeof parsed.axis === 'object' && !Array.isArray(parsed.axis)) {
+        axisObj = {
+          x: Boolean(parsed.axis.x),
+          y: Boolean(parsed.axis.y),
+          z: Boolean(parsed.axis.z),
+        };
+      }
+      
       return {
         src: String(parsed?.src || ""),
         rotationSpeed: Number.isFinite(Number(parsed?.rotationSpeed)) ? Number(parsed.rotationSpeed) : 1,
-        axis: ["x", "y", "z"].includes(parsed?.axis) ? parsed.axis : "y",
+        axis: axisObj,
+        autoRotate: Boolean(parsed?.autoRotate),
         buttons: Array.isArray(parsed?.buttons) ? parsed.buttons : [],
       };
     } catch {
@@ -767,6 +820,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editModelOffsetX, setEditModelOffsetX] = useState(0);
   const [editModelOffsetY, setEditModelOffsetY] = useState(0);
   const [editModelOffsetZ, setEditModelOffsetZ] = useState(0);
+  const [editModelScale, setEditModelScale] = useState(1);
+  const [editInspectModelOffsetX, setEditInspectModelOffsetX] = useState(0);
+  const [editInspectModelOffsetY, setEditInspectModelOffsetY] = useState(0);
+  const [editInspectModelOffsetZ, setEditInspectModelOffsetZ] = useState(0);
+  const [editInspectModelScale, setEditInspectModelScale] = useState(1);
   const [editPlacement, setEditPlacement] = useState("");
   const [editPontoDestino, setEditPontoDestino] = useState("");
   const [editNavigationSelection, setEditNavigationSelection] = useState(null);
@@ -789,10 +847,22 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const [editImage4pOcclusionMaskInset, setEditImage4pOcclusionMaskInset] = useState(0);
   const editImage4pHasOcclusion = editImage4pDepthMode === "occlusion-mask";
   const [inspectModeHotspotId, setInspectModeHotspotId] = useState(null);
+  const inspectModeHotspotIdRef = useRef(null);
+  const [inspectModelRotationAxes, setInspectModelRotationAxes] = useState({ x: false, y: true, z: false });
+  const [inspectAutoRotate, setInspectAutoRotate] = useState(false);
   const [editInspect3dSrc, setEditInspect3dSrc] = useState(null);
   const [editInspect3dRotationSpeed, setEditInspect3dRotationSpeed] = useState(1);
-  const [editInspect3dAxis, setEditInspect3dAxis] = useState("y");
+  const [editInspect3dAxis, setEditInspect3dAxis] = useState({ x: false, y: true, z: false });
+  const [editInspect3dAutoRotate, setEditInspect3dAutoRotate] = useState(false);
   const [editInspect3dButtons, setEditInspect3dButtons] = useState([]);
+  const [inspectModelYaw, setInspectModelYaw] = useState(0);
+  const [inspectModelPitch, setInspectModelPitch] = useState(0);
+  const [inspectModelRoll, setInspectModelRoll] = useState(0);
+  const inspectMouseDownRef = useRef(false);
+  const inspectMouseStartRef = useRef({ x: 0, y: 0 });
+  const inspectModelRef = useRef(null);
+  const [inspectModelWorldPos, setInspectModelWorldPos] = useState(null);
+  const [inspectAnimating, setInspectAnimating] = useState(false);
   const [isCapturingImage4pPoints, setIsCapturingImage4pPoints] = useState(false);
   const [isCapturingImage4pMaskPoints, setIsCapturingImage4pMaskPoints] = useState(false);
   const [isPickingGroundPosition, setIsPickingGroundPosition] = useState(false);
@@ -834,6 +904,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   );
 
   const [editingItem, setEditingItem] = useState(null);
+
+  useEffect(() => {
+    inspectModeHotspotIdRef.current = inspectModeHotspotId;
+  }, [inspectModeHotspotId]);
+
   const normalizeDomeUrlKey = (value) => String(value || "").split("?")[0].split("#")[0];
   const currentViewPath = useMemo(() => {
     if (parsedEnvironment?.mode === "url") {
@@ -1297,6 +1372,15 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         model_offset: (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
           ? { x: toFiniteNumber(editModelOffsetX, 0), y: toFiniteNumber(editModelOffsetY, 0), z: toFiniteNumber(editModelOffsetZ, 0) }
           : (hotspot.model_offset || { x: 0, y: 0, z: 0 }),
+        model_scale: (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
+          ? normalizeModelScale(editModelScale)
+          : normalizeModelScale(hotspot.model_scale),
+        inspect_model_offset: editTipo === "modelo3d_inspect"
+          ? { x: toFiniteNumber(editInspectModelOffsetX, 0), y: toFiniteNumber(editInspectModelOffsetY, 0), z: toFiniteNumber(editInspectModelOffsetZ, 0) }
+          : (hotspot.inspect_model_offset || hotspot.model_offset || { x: 0, y: 0, z: 0 }),
+        inspect_model_scale: editTipo === "modelo3d_inspect"
+          ? normalizeModelScale(editInspectModelScale)
+          : normalizeModelScale(hotspot.inspect_model_scale ?? hotspot.model_scale),
         id_ponto_destino: "",
         navigation_file_path: "",
         navigation_file_url: "",
@@ -1319,6 +1403,11 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     editModelOffsetX,
     editModelOffsetY,
     editModelOffsetZ,
+    editModelScale,
+    editInspectModelOffsetX,
+    editInspectModelOffsetY,
+    editInspectModelOffsetZ,
+    editInspectModelScale,
     editPlacement,
     editPontoDestino,
     editNavigationPath,
@@ -2007,6 +2096,142 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     setEnvironmentLoadError("");
   }, [isHdrOrExrEnvironment]);
 
+  // Gerenciar modo inspect 3D: travar a câmara a apontar para o hotspot e preparar a rotação do modelo
+  useEffect(() => {
+    const sceneEl = sceneRef.current;
+    if (!sceneEl?.camera) return;
+
+    const cameraEl = sceneEl.querySelector("a-camera");
+    if (!cameraEl) return;
+
+    if (inspectModeHotspotId) {
+      const hotspot = hotspots.find((h) => h.id === inspectModeHotspotId);
+      if (hotspot) {
+        // Remover componente look-controls da câmara
+        cameraEl.removeAttribute("look-controls");
+        const tx = Number(hotspot.x) || 0;
+        const ty = Number(hotspot.y) || 0;
+        const tz = Number(hotspot.z) || 0;
+        sceneEl.camera.lookAt(tx, ty, tz);
+      }
+      setInspectModelYaw(0);
+      setInspectModelPitch(0);
+      setInspectModelRoll(0);
+
+      // Tecla ESC para sair
+      const handleKeyDown = (e) => {
+        if (e.key === "Escape") {
+          setInspectModeHotspotId(null);
+        }
+      };
+      document.addEventListener("keydown", handleKeyDown);
+
+      return () => {
+        document.removeEventListener("keydown", handleKeyDown);
+      };
+    } else {
+      // Re-adicionar componente look-controls quando sair do modo inspect
+      cameraEl.setAttribute("look-controls", "");
+      setInspectModelYaw(0);
+      setInspectModelPitch(0);
+      setInspectModelRoll(0);
+      setInspectAutoRotate(false);
+      setInspectModelWorldPos(null);
+      setInspectAnimating(false);
+    }
+  }, [inspectModeHotspotId, hotspots, inspectModelWorldPos]);
+
+  // Controles de mouse para rodar o modelo
+  useEffect(() => {
+    if (!inspectModeHotspotId) return;
+
+    const sceneEl = sceneRef.current;
+    if (!sceneEl?.canvas) return;
+
+    const MOUSE_SENSITIVITY = 0.5; // graus por pixel
+
+    const handleMouseDown = (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      inspectMouseDownRef.current = true;
+      inspectMouseStartRef.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleMouseMove = (e) => {
+      if (!inspectMouseDownRef.current) return;
+
+      const deltaX = e.clientX - inspectMouseStartRef.current.x;
+      const deltaY = e.clientY - inspectMouseStartRef.current.y;
+
+      inspectMouseStartRef.current = { x: e.clientX, y: e.clientY };
+
+      // Aplicar rotação apenas nos eixos habilitados
+      if (inspectModelRotationAxes.y) {
+        setInspectModelYaw((prev) => prev + deltaX * MOUSE_SENSITIVITY);
+      }
+      if (inspectModelRotationAxes.x) {
+        setInspectModelPitch((prev) => prev + deltaY * MOUSE_SENSITIVITY);
+      }
+      if (inspectModelRotationAxes.z) {
+        // Para o eixo Z (roll), usar a magnitude do movimento
+        const deltaLength = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        const sign = deltaX > 0 ? 1 : -1;
+        setInspectModelRoll((prev) => prev + sign * deltaLength * MOUSE_SENSITIVITY * 0.1);
+      }
+    };
+
+    const handleMouseUp = () => {
+      inspectMouseDownRef.current = false;
+    };
+
+    const canvas = sceneEl.canvas;
+    canvas.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      inspectMouseDownRef.current = false;
+      canvas.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [inspectModeHotspotId, inspectModelRotationAxes]);
+
+  useEffect(() => {
+    const modelEl = inspectModelRef.current;
+    if (!modelEl) return;
+
+    modelEl.setAttribute("rotation", `${inspectModelPitch} ${inspectModelYaw} ${inspectModelRoll}`);
+  }, [inspectModelPitch, inspectModelYaw, inspectModelRoll, inspectModeHotspotId]);
+
+  // Animação automática de rotação
+  useEffect(() => {
+    if (!inspectModeHotspotId || !inspectAutoRotate) return;
+
+    let animationFrameId;
+    const autoRotateSpeed = 1; // graus por frame a ~60fps = ~60 graus por segundo
+
+    const animate = () => {
+      if (inspectMouseDownRef.current) {
+        animationFrameId = requestAnimationFrame(animate);
+        return;
+      }
+
+      if (inspectModelRotationAxes.y) {
+        setInspectModelYaw((prev) => prev + autoRotateSpeed);
+      }
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [inspectModeHotspotId, inspectAutoRotate, inspectModelRotationAxes.y]);
+
   const effectivePanoramaRotation = useMemo(() => {
     const x = Number(domeRotationX) || 0;
     const y = Number(domeRotationY) || 0;
@@ -2056,6 +2281,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
   const renderModelo3dHotspot = (conteudo, hotspot) => {
     const modelSrc = resolveModel3dSrc(conteudo);
     const modelOffset = normalizeModelOffset(hotspot?.model_offset);
+    const modelScale = normalizeModelScale(hotspot?.model_scale);
 
     const modelToUse = modelSrc || conteudo;
     const isOBJ = String(modelToUse || "").toLowerCase().split("?")[0].split("#")[0].endsWith(".obj");
@@ -2073,7 +2299,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
             position="0 0 0"
             rotation="0 0 0"
-            scale="1 1 1"
+            scale={`${modelScale} ${modelScale} ${modelScale}`}
             shadow="cast: true; receive: true"
           />
         </a-entity>
@@ -2208,31 +2434,74 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       const payload = decodeInspect3dValue(conteudo);
       const hotspotIcon = renderHotspotIcon(getHotspotIconConfig(), hotspot);
       const isInspecting = inspectModeHotspotId === hotspot.id;
-      const modelOffset = normalizeModelOffset(hotspot?.model_offset);
+      const previewModelOffset = normalizeModelOffset(hotspot?.model_offset);
+      const previewModelScale = normalizeModelScale(hotspot?.model_scale);
+      const inspectModelOffset = normalizeModelOffset(hotspot?.inspect_model_offset ?? hotspot?.model_offset);
+      const inspectModelScale = normalizeModelScale(hotspot?.inspect_model_scale ?? hotspot?.model_scale);
+      const previewScale = Math.max(0.08, previewModelScale * 0.2);
+      const previewRotation = `${Number(hotspot?.rot_pitch) || 0} ${Number(hotspot?.rot_yaw) || 0} 0`;
 
-      if (!isInspecting) {
-        if (hotspot?.hide_icon && !canManageHotspots) return null;
-        return hotspotIcon;
-      }
+      if (!payload) return hotspotIcon;
 
-      if (!payload) return null;
       const modelSrc = resolveModel3dSrc(payload.src);
       const modelToUse = modelSrc || payload.src;
       const isOBJ = String(modelToUse || "").toLowerCase().split("?")[0].split("#")[0].endsWith(".obj");
 
+      if (!isInspecting) {
+        if (hotspot?.hide_icon && !canManageHotspots) return null;
+        return (
+          <a-entity>
+            {hotspotIcon}
+            <a-entity
+              position={`${previewModelOffset.x} ${previewModelOffset.y} ${previewModelOffset.z}`}
+            >
+              <a-entity
+                key={`inspect-preview-${modelToUse}`}
+                {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
+                position="0 0 0"
+                rotation={previewRotation}
+                scale={`${previewScale} ${previewScale} ${previewScale}`}
+                shadow="cast: true; receive: true"
+              />
+            </a-entity>
+          </a-entity>
+        );
+      }
+
+      const modelRotation = `${inspectModelPitch} ${inspectModelYaw} 0`;
+
+      // Posição mundial calculada à frente da câmara
+      const wx = inspectModelWorldPos?.x ?? (Number(hotspot.x) || 0);
+      const wy = inspectModelWorldPos?.y ?? (Number(hotspot.y) || 0);
+      const wz = inspectModelWorldPos?.z ?? (Number(hotspot.z) || 0);
+
+      // Posição de origem para a animação de entrada
+      const ox = Number(hotspot.x) || 0;
+      const oy = Number(hotspot.y) || 0;
+      const oz = Number(hotspot.z) || 0;
+
       return (
         <a-entity
           key={`inspect-wrap-${modelToUse}-${isInspecting}`}
-          position={`${modelOffset.x} ${modelOffset.y} ${modelOffset.z}`}
+          position={`${wx} ${wy} ${wz}`}
         >
           <a-entity
-            key={`inspect-${modelToUse}-${isInspecting}`}
-            {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
-            position="0 0 0"
-            rotation="0 0 0"
-            scale="1 1 1"
-            shadow="cast: true; receive: true"
-          />
+            position={`${inspectModelOffset.x} ${inspectModelOffset.y} ${inspectModelOffset.z}`}
+          >
+            <a-entity
+              key={`inspect-${modelToUse}-${isInspecting}`}
+              ref={inspectModelRef}
+              {...(isOBJ ? { "obj-model": `obj: ${modelToUse}` } : { "gltf-model": modelToUse })}
+              position="0 0 0"
+              rotation={modelRotation}
+              scale={`${inspectModelScale} ${inspectModelScale} ${inspectModelScale}`}
+              shadow="cast: true; receive: true"
+              {...(inspectAnimating ? {
+                "animation__entrypos": `property: position; from: ${ox - wx} ${oy - wy} ${oz - wz}; to: 0 0 0; dur: 500; easing: easeOutCubic`,
+                "animation__entryscale": `property: scale; from: ${inspectModelScale * 0.4} ${inspectModelScale * 0.4} ${inspectModelScale * 0.4}; to: ${inspectModelScale} ${inspectModelScale} ${inspectModelScale}; dur: 500; easing: easeOutBack`,
+              } : {})}
+            />
+          </a-entity>
         </a-entity>
       );
     },
@@ -2305,6 +2574,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           const navigation = decodeNavigationContent(h.tipo || "", h.conteudo || "");
           const isNavigation = navigation.mode === "point" || navigation.mode === "file" || navigation.mode === "back";
           const modelOffset = normalizeModelOffset(decodedContent.modelOffset);
+          const modelScale = normalizeModelScale(decodedContent.modelScale);
+          const inspectModelOffset = normalizeModelOffset(decodedContent.inspectModelOffset ?? decodedContent.modelOffset);
+          const inspectModelScale = normalizeModelScale(decodedContent.inspectModelScale ?? decodedContent.modelScale);
           return {
             id: h.id_hotspot,
             id_hotspot: h.id_hotspot,
@@ -2318,6 +2590,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
             tipo: isNavigation ? "navegacao" : (h.tipo === "modelo3d" && decodedContent.value.startsWith(INSPECT3D_PREFIX) ? "modelo3d_inspect" : (h.tipo || "")),
             conteudo: isNavigation ? "" : decodedContent.value,
             model_offset: modelOffset,
+            model_scale: modelScale,
+            inspect_model_offset: inspectModelOffset,
+            inspect_model_scale: inspectModelScale,
             view_path: decodedContent.view,
             navigation_mode: navigation.mode,
             id_ponto_destino: navigation.pointId,
@@ -2739,7 +3014,37 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
       const hotspot = hotspots.find((h) => h.id === id);
       if (hotspot) {
         if (hotspot.tipo === "modelo3d_inspect" && !editDialogOpen) {
-          setInspectModeHotspotId((prev) => prev === hotspot.id ? null : hotspot.id);
+          if (inspectModeHotspotIdRef.current === hotspot.id) return;
+
+          const sceneEl = sceneRef.current;
+          const THREE = window?.THREE;
+          if (THREE && sceneEl?.camera) {
+            sceneEl.camera.lookAt(
+              Number(hotspot.x) || 0,
+              Number(hotspot.y) || 0,
+              Number(hotspot.z) || 0
+            );
+            const camDir = new THREE.Vector3();
+            sceneEl.camera.getWorldDirection(camDir);
+            const camPos = new THREE.Vector3();
+            sceneEl.camera.getWorldPosition(camPos);
+            const targetPos = camPos.clone().add(camDir.clone().multiplyScalar(0.1));
+            setInspectModelWorldPos({ x: targetPos.x, y: targetPos.y, z: targetPos.z });
+          }
+
+          setInspectAnimating(true);
+          setInspectModeHotspotId(hotspot.id);
+          
+          // Carregar os eixos de rotação permitidos e configurações do hotspot
+          const inspect3dPayload = decodeInspect3dValue(hotspot.conteudo || "");
+          if (inspect3dPayload?.axis) {
+            setInspectModelRotationAxes(inspect3dPayload.axis);
+          } else {
+            setInspectModelRotationAxes({ x: false, y: true, z: false });
+          }
+          setInspectAutoRotate(Boolean(inspect3dPayload?.autoRotate));
+          
+          setTimeout(() => setInspectAnimating(false), 520);
           return;
         }
 
@@ -3163,6 +3468,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           tipo: hotspotCriado.tipo || "",
           conteudo: hotspotCriado.conteudo || "",
           model_offset: { x: 0, y: 0, z: 0 },
+          model_scale: 1,
           view_path: activeViewPath,
           navigation_mode: null,
           id_ponto_destino: "",
@@ -3189,6 +3495,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditModelOffsetX(0);
         setEditModelOffsetY(0);
         setEditModelOffsetZ(0);
+        setEditModelScale(1);
         setEditPlacement(String(hotspotEditavel.placement || ""));
         setEditStickToGround(String(hotspotEditavel.placement || "") === "ground");
         setEditHideIcon(Boolean(hotspotEditavel.hide_icon));
@@ -3214,7 +3521,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         setEditImage4pOcclusionMaskInset(0);
         setEditInspect3dSrc(null);
         setEditInspect3dRotationSpeed(1);
-        setEditInspect3dAxis("y");
+        setEditInspect3dAxis({ x: false, y: true, z: false });
+        setEditInspect3dAutoRotate(false);
         setEditInspect3dButtons([]);
         setIsCapturingImage4pPoints(false);
         setIsCapturingImage4pMaskPoints(false);
@@ -3462,6 +3770,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         src: finalModelSrc,
         rotationSpeed: editInspect3dRotationSpeed,
         axis: editInspect3dAxis,
+        autoRotate: editInspect3dAutoRotate,
         buttons: editInspect3dButtons
       });
     }
@@ -3549,7 +3858,27 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
     const finalModelOffset = (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
       ? { x: toFiniteNumber(editModelOffsetX, 0), y: toFiniteNumber(editModelOffsetY, 0), z: toFiniteNumber(editModelOffsetZ, 0) }
       : null;
-    const finalConteudo = encodeHotspotContent(finalConteudoRaw, activeViewPath, editScale, editYaw, editPitch, finalPlacement, finalModelOffset);
+    const finalModelScale = (editTipo === "modelo3d" || editTipo === "modelo3d_inspect")
+      ? normalizeModelScale(editModelScale)
+      : null;
+    const finalInspectModelOffset = editTipo === "modelo3d_inspect"
+      ? { x: toFiniteNumber(editInspectModelOffsetX, 0), y: toFiniteNumber(editInspectModelOffsetY, 0), z: toFiniteNumber(editInspectModelOffsetZ, 0) }
+      : null;
+    const finalInspectModelScale = editTipo === "modelo3d_inspect"
+      ? normalizeModelScale(editInspectModelScale)
+      : null;
+    const finalConteudo = encodeHotspotContent(
+      finalConteudoRaw,
+      activeViewPath,
+      editScale,
+      editYaw,
+      editPitch,
+      finalPlacement,
+      finalModelOffset,
+      finalModelScale,
+      finalInspectModelOffset,
+      finalInspectModelScale
+    );
     const finalX = Number(editX);
     const finalY = editStickToGround ? floorY : Number(editY);
     const finalZ = Number(editZ);
@@ -3593,6 +3922,9 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
         scale: Number(editScale),
         placement: finalPlacement,
         model_offset: finalModelOffset ? normalizeModelOffset(finalModelOffset) : (selectedHotspot?.model_offset || { x: 0, y: 0, z: 0 }),
+        model_scale: finalModelScale ?? normalizeModelScale(selectedHotspot?.model_scale),
+        inspect_model_offset: finalInspectModelOffset ? normalizeModelOffset(finalInspectModelOffset) : (selectedHotspot?.inspect_model_offset || selectedHotspot?.model_offset || { x: 0, y: 0, z: 0 }),
+        inspect_model_scale: finalInspectModelScale ?? normalizeModelScale(selectedHotspot?.inspect_model_scale ?? selectedHotspot?.model_scale),
         navigation_mode: editTipo === "navegacao" ? editNavigationMode : null,
         id_ponto_destino: finalPontoDestino,
         navigation_file_path: finalNavigationPath,
@@ -4102,6 +4434,12 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                   setEditModelOffsetX(loadedModelOffset.x);
                   setEditModelOffsetY(loadedModelOffset.y);
                   setEditModelOffsetZ(loadedModelOffset.z);
+                  setEditModelScale(normalizeModelScale(selectedHotspot.model_scale));
+                  const loadedInspectModelOffset = normalizeModelOffset(selectedHotspot.inspect_model_offset ?? selectedHotspot.model_offset);
+                  setEditInspectModelOffsetX(loadedInspectModelOffset.x);
+                  setEditInspectModelOffsetY(loadedInspectModelOffset.y);
+                  setEditInspectModelOffsetZ(loadedInspectModelOffset.z);
+                  setEditInspectModelScale(normalizeModelScale(selectedHotspot.inspect_model_scale ?? selectedHotspot.model_scale));
                   const placement = String(
                     selectedHotspot.placement
                     || (Math.abs((Number(selectedHotspot.y) || 0) - floorY) <= 0.001 ? "ground" : "dome")
@@ -4141,14 +4479,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setIsCapturingImage4pMaskPoints(false);
                     setEditInspect3dSrc(null);
                     setEditInspect3dRotationSpeed(1);
-                    setEditInspect3dAxis("y");
+                    setEditInspect3dAxis({ x: false, y: true, z: false });
+                    setEditInspect3dAutoRotate(false);
                     setEditInspect3dButtons([]);
                   } else if (selectedHotspot.tipo === "modelo3d_inspect") {
                     const payload = decodeInspect3dValue(selectedHotspot.conteudo || "");
                     const src = payload?.src || "";
                     setEditInspect3dSrc(src);
                     setEditInspect3dRotationSpeed(Number.isFinite(Number(payload?.rotationSpeed)) ? Number(payload.rotationSpeed) : 1);
-                    setEditInspect3dAxis(["x", "y", "z"].includes(payload?.axis) ? payload.axis : "y");
+                    setEditInspect3dAxis(payload?.axis || { x: false, y: true, z: false });
+                    setEditInspect3dAutoRotate(Boolean(payload?.autoRotate));
                     setEditInspect3dButtons(Array.isArray(payload?.buttons) ? payload.buttons : []);
                     const rel = relativePathFromUploadsUrl(src);
                     setEditModelSelection(rel ? createLibrarySelection(rel) : null);
@@ -4183,7 +4523,8 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                     setIsCapturingImage4pMaskPoints(false);
                     setEditInspect3dSrc(null);
                     setEditInspect3dRotationSpeed(1);
-                    setEditInspect3dAxis("y");
+                    setEditInspect3dAxis({ x: false, y: true, z: false });
+                    setEditInspect3dAutoRotate(false);
                     setEditInspect3dButtons([]);
                   }
                   setPositionAndAnglesFromXYZ(selectedHotspot.x, selectedHotspot.y, selectedHotspot.z);
@@ -4242,27 +4583,37 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
           if (!payload) return null;
 
           return (
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-end items-center pb-12 z-50">
-              <button
+            <div className="absolute inset-0 pointer-events-none z-50">
+              <Button
                 type="button"
-                className="absolute top-4 right-4 pointer-events-auto bg-black/50 hover:bg-black/70 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl font-bold backdrop-blur-sm"
-                onClick={() => setInspectModeHotspotId(null)}
+                variant="outline"
+                size="icon"
+                className="absolute top-4 right-4 pointer-events-auto h-12 w-12 rounded-md border-0 bg-background/85 text-foreground shadow-sm backdrop-blur-sm hover:bg-background/95 hover:text-foreground"
+                onClick={() => {
+                  setInspectModeHotspotId(null);
+                  setInspectModelWorldPos(null);
+                  setInspectAnimating(false);
+                  setInspectModelYaw(0);
+                  setInspectModelPitch(0);
+                  setInspectModelRoll(0);
+                  setInspectAutoRotate(false);
+                }}
+                title="Fechar (ESC)"
               >
                 ✕
-              </button>
-              <div className="flex gap-4 pointer-events-auto overflow-x-auto max-w-full px-4 py-2 drop-shadow-md">
+              </Button>
+
+              {payload.buttons && payload.buttons.length > 0 && (
+                <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 pointer-events-auto flex gap-3 flex-wrap justify-center max-w-2xl">
                 {payload.buttons?.map((btn, i) => (
-                  <a
-                    key={i}
-                    href={btn.url || "#"}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-white hover:bg-gray-100 text-black px-6 py-3 rounded-full font-medium whitespace-nowrap shadow-lg transition-transform hover:scale-105"
-                  >
-                    {btn.label}
-                  </a>
+                  <Button key={i} asChild variant="outline" className="rounded-md border-0 bg-background/85 px-5 py-2.5 text-sm font-medium text-foreground shadow-sm backdrop-blur-sm hover:bg-background/95 hover:text-foreground">
+                    <a href={btn.url || "#"} target="_blank" rel="noopener noreferrer">
+                      {btn.label}
+                    </a>
+                  </Button>
                 ))}
-              </div>
+                </div>
+              )}
             </div>
           );
         })()}
@@ -4541,16 +4892,36 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       helperText="Selecione o modelo para rotação e inspeção."
                     />
 
-                    <label className="text-sm font-medium mt-1">Eixo de Rotação:</label>
-                    <select
-                      value={editInspect3dAxis}
-                      onChange={(e) => setEditInspect3dAxis(e.target.value)}
-                      className="border rounded px-2 py-1 text-sm dark:bg-black"
-                    >
-                      <option value="x">X</option>
-                      <option value="y">Y</option>
-                      <option value="z">Z</option>
-                    </select>
+                    <label className="text-sm font-medium mt-1">Eixos de Rotação:</label>
+                    <div className="flex gap-4 items-center">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editInspect3dAxis.x}
+                          onChange={(e) => setEditInspect3dAxis({ ...editInspect3dAxis, x: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span className="text-sm">Eixo X</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editInspect3dAxis.y}
+                          onChange={(e) => setEditInspect3dAxis({ ...editInspect3dAxis, y: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span className="text-sm">Eixo Y</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editInspect3dAxis.z}
+                          onChange={(e) => setEditInspect3dAxis({ ...editInspect3dAxis, z: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span className="text-sm">Eixo Z</span>
+                      </label>
+                    </div>
 
                     <label className="text-sm font-medium mt-1">Velocidade de Rotação:</label>
                     <input
@@ -4560,6 +4931,16 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                       onChange={(e) => setEditInspect3dRotationSpeed(parseFloat(e.target.value))}
                       className="border rounded px-2 py-1 text-sm dark:bg-black"
                     />
+
+                    <label className="flex items-center gap-2 cursor-pointer mt-1">
+                      <input
+                        type="checkbox"
+                        checked={editInspect3dAutoRotate}
+                        onChange={(e) => setEditInspect3dAutoRotate(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">Rotação Automática</span>
+                    </label>
 
                     <label className="text-sm font-medium mt-1">Botões de Ação:</label>
                     <div className="border border-black/10 rounded p-2 flex flex-col gap-2 max-h-40 overflow-y-auto">
@@ -5010,7 +5391,7 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
 
                 {(editTipo === "modelo3d" || editTipo === "modelo3d_inspect") && (
                   <div className="rounded border border-black/10 p-2 mt-1">
-                    <div className="text-xs font-semibold text-black/70 mb-2">Posição do objeto (offset)</div>
+                    <div className="text-xs font-semibold text-black/70 mb-2">Posição do objeto no preview</div>
                     <div className="grid grid-cols-3 gap-2">
                       <DragNumberInput
                         label="Obj X"
@@ -5031,8 +5412,50 @@ const AFrameViewer = ({ environment, enableContextMenu = false, pontoId, navigat
                         step={0.1}
                       />
                     </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2">
+                      <DragNumberInput
+                        label="Obj Scale"
+                        value={(normalizeModelScale(editModelScale) || 1).toFixed(2)}
+                        onChange={(next) => setEditModelScale(Math.max(0.01, next))}
+                        step={0.05}
+                      />
+                    </div>
                     <div className="mt-2 text-[11px] text-neutral-600">
-                      Move só o modelo 3D dentro do hotspot (o ícone não muda). A posição do hotspot continua a mover ambos.
+                      Move e escala só o modelo 3D dentro do hotspot (o ícone não muda). A posição do hotspot continua a mover ambos.
+                    </div>
+                  </div>
+                )}
+
+                {editTipo === "modelo3d_inspect" && (
+                  <div className="rounded border border-cyan-300/70 bg-cyan-50/40 p-2 mt-1">
+                    <div className="text-xs font-semibold text-cyan-900 mb-2">Posição do modelo em inspeção</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <DragNumberInput
+                        label="Inspec X"
+                        value={Number(editInspectModelOffsetX) || 0}
+                        onChange={(next) => setEditInspectModelOffsetX(next)}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="Inspec Y"
+                        value={Number(editInspectModelOffsetY) || 0}
+                        onChange={(next) => setEditInspectModelOffsetY(next)}
+                        step={0.1}
+                      />
+                      <DragNumberInput
+                        label="Inspec Z"
+                        value={Number(editInspectModelOffsetZ) || 0}
+                        onChange={(next) => setEditInspectModelOffsetZ(next)}
+                        step={0.1}
+                      />
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2">
+                      <DragNumberInput
+                        label="Inspec Scale"
+                        value={(normalizeModelScale(editInspectModelScale) || 1).toFixed(2)}
+                        onChange={(next) => setEditInspectModelScale(Math.max(0.01, next))}
+                        step={0.05}
+                      />
                     </div>
                   </div>
                 )}
